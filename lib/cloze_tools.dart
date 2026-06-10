@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class ClozeTools {
   static const answerColor = '#12805C';
 
@@ -33,7 +35,8 @@ class ClozeTools {
   static String answerHtml(String value) {
     return value.replaceAllMapped(_clozePattern, (match) {
       final answer = match.group(2)?.trim() ?? '';
-      return '<strong style="color:$answerColor;font-weight:800">$answer</strong>';
+      final escapedAnswer = const HtmlEscape().convert(answer);
+      return '<strong style="color:$answerColor;font-weight:800">$escapedAnswer</strong>';
     });
   }
 

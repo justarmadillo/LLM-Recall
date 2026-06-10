@@ -137,4 +137,45 @@ void main() {
     expect(restoredCards.single.fields['Back'], '<b>1215</b>');
     expect(await restored.getSetting('default_export_folder'), 'D:\\Recall');
   });
+
+  test('rejects malformed backups before replacing existing data', () async {
+    final sessionId = await repository.createSession(
+      title: 'Keep me',
+      source: 'safe.csv',
+      fieldNames: const ['Front', 'Back'],
+      frontField: 'Front',
+      revealFields: const ['Back'],
+      exportFields: const ['Front', 'Back'],
+      includeHeader: true,
+      cardFields: const [
+        {'Front': 'Still here?', 'Back': 'Yes'},
+      ],
+    );
+
+    await expectLater(
+      repository.importBackup({
+        'format': 'llm_recall_backup',
+        'formatVersion': 1,
+        'sessions': 'not a list',
+      }),
+      throwsFormatException,
+    );
+
+    final sessions = await repository.listSessions();
+    final cards = await repository.listCards(sessionId);
+
+    expect(sessions.single.title, 'Keep me');
+    expect(cards.single.fields['Back'], 'Yes');
+  });
+
+  test('rejects backups from a newer backup format', () async {
+    await expectLater(
+      repository.importBackup({
+        'format': 'llm_recall_backup',
+        'formatVersion': 2,
+        'sessions': const [],
+      }),
+      throwsFormatException,
+    );
+  });
 }

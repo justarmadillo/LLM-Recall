@@ -76,9 +76,15 @@ class PreAnkiSession {
   final int learnedCount;
   final int againCount;
 
-  int get keptCount => totalCards - deletedCount;
+  int get keptCount {
+    final count = totalCards - deletedCount;
+    return count < 0 ? 0 : count;
+  }
 
-  int get learningCount => keptCount - learnedCount;
+  int get learningCount {
+    final count = keptCount - learnedCount;
+    return count < 0 ? 0 : count;
+  }
 
   double get progress {
     if (keptCount <= 0) {
@@ -157,8 +163,8 @@ class PreAnkiSession {
       includeHeader: (row['include_header'] as int? ?? 1) == 1,
       totalCards: row['total_cards'] as int? ?? 0,
       reviewIndex: row['review_index'] as int? ?? 0,
-      createdAt: DateTime.parse(row['created_at'] as String),
-      updatedAt: DateTime.parse(row['updated_at'] as String),
+      createdAt: _decodeDate(row['created_at']),
+      updatedAt: _decodeDate(row['updated_at']),
       deletedCount: deletedCount,
       learnedCount: learnedCount,
       againCount: againCount,
@@ -238,8 +244,8 @@ class Flashcard {
       reviewState: ReviewState.fromStorage(
         row['review_state'] as String? ?? 'new',
       ),
-      createdAt: DateTime.parse(row['created_at'] as String),
-      updatedAt: DateTime.parse(row['updated_at'] as String),
+      createdAt: _decodeDate(row['created_at']),
+      updatedAt: _decodeDate(row['updated_at']),
     );
   }
 }
@@ -248,14 +254,40 @@ List<String> _decodeStringList(String? raw) {
   if (raw == null || raw.isEmpty) {
     return const [];
   }
-  final decoded = jsonDecode(raw) as List<dynamic>;
-  return decoded.map((value) => value.toString()).toList();
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) {
+      return const [];
+    }
+    return decoded.map((value) => value.toString()).toList();
+  } on FormatException {
+    return const [];
+  }
 }
 
 Map<String, String> _decodeStringMap(String? raw) {
   if (raw == null || raw.isEmpty) {
     return const {};
   }
-  final decoded = jsonDecode(raw) as Map<String, dynamic>;
-  return decoded.map((key, value) => MapEntry(key, value?.toString() ?? ''));
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) {
+      return const {};
+    }
+    return decoded.map(
+      (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+    );
+  } on FormatException {
+    return const {};
+  }
+}
+
+DateTime _decodeDate(Object? raw) {
+  if (raw is String) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  return DateTime.fromMillisecondsSinceEpoch(0);
 }

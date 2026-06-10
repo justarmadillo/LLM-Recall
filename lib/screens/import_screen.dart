@@ -190,33 +190,59 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   Future<void> _pickFile() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['csv', 'txt'],
-      withData: true,
-    );
-    if (result == null || result.files.isEmpty) {
-      return;
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['csv', 'txt'],
+        withData: true,
+      );
+      if (!mounted || result == null || result.files.isEmpty) {
+        return;
+      }
+      final file = result.files.single;
+      final content = await _readPickedFileText(file);
+      if (!mounted) {
+        return;
+      }
+      _sourceName = file.name;
+      _textController.text = content;
+      _parse(content);
+    } on FileSystemException {
+      if (mounted) {
+        setState(() => _formError = 'Could not read that file.');
+      }
+    } on FormatException {
+      if (mounted) {
+        setState(() => _formError = 'That file is not valid text.');
+      }
     }
-    final file = result.files.single;
-    String content;
-    if (file.bytes != null) {
-      content = utf8.decode(file.bytes!);
-    } else if (file.path != null) {
-      content = await File(file.path!).readAsString();
-    } else {
-      setState(() => _formError = 'Could not read that file.');
-      return;
+  }
+
+  Future<String> _readPickedFileText(PlatformFile file) async {
+    final bytes = file.bytes;
+    if (bytes != null) {
+      return utf8.decode(bytes, allowMalformed: true);
     }
-    _sourceName = file.name;
-    _textController.text = content;
-    _parse(content);
+    final path = file.path;
+    if (path == null) {
+      throw const FileSystemException('Could not read picked file.');
+    }
+    return utf8.decode(await File(path).readAsBytes(), allowMalformed: true);
+  }
+
+  void _setFormError(String message) {
+    if (mounted) {
+      setState(() => _formError = message);
+    }
   }
 
   Future<void> _pasteClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) {
+      return;
+    }
     if (data?.text == null || data!.text!.trim().isEmpty) {
-      setState(() => _formError = 'Clipboard does not contain CSV text.');
+      _setFormError('Clipboard does not contain CSV text.');
       return;
     }
     _sourceName = 'Clipboard';
@@ -225,7 +251,13 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   void _parse(String input) {
-    final parsed = _csvTools.parse(input);
+    final CsvImportResult parsed;
+    try {
+      parsed = _csvTools.parse(input);
+    } on FormatException {
+      _setFormError('Could not parse that CSV text.');
+      return;
+    }
     if (parsed.rows.isEmpty) {
       setState(() {
         _result = null;

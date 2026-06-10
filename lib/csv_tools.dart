@@ -38,7 +38,10 @@ class CsvTools {
   static const delimiters = [',', ';', '\t'];
 
   CsvImportResult parse(String input) {
-    final normalized = input.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final normalized = input
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
     if (normalized.trim().isEmpty) {
       return const CsvImportResult(delimiter: ',', rows: [], hasHeader: false);
     }
@@ -92,10 +95,15 @@ class CsvTools {
   }
 
   List<List<String>> _parseWithDelimiter(String input, String delimiter) {
-    final parsed = CsvDecoder(
-      fieldDelimiter: delimiter,
-      dynamicTyping: false,
-    ).convert(input);
+    final List<List<dynamic>> parsed;
+    try {
+      parsed = CsvDecoder(
+        fieldDelimiter: delimiter,
+        dynamicTyping: false,
+      ).convert(input);
+    } on FormatException {
+      return const [];
+    }
     return parsed
         .map((row) => row.map((cell) => cell?.toString() ?? '').toList())
         .where((row) => row.any((cell) => cell.trim().isNotEmpty))

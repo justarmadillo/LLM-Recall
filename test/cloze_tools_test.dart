@@ -15,5 +15,14 @@ void main() {
       );
       expect(ClozeTools.clozeNumbers(text), [1, 2]);
     });
+
+    test('escapes cloze answers before rendering html', () {
+      const text = 'Use {{c1::<b>ATP</b> & energy}}.';
+
+      expect(
+        ClozeTools.answerHtml(text),
+        'Use <strong style="color:#12805C;font-weight:800">&lt;b&gt;ATP&lt;&#47;b&gt; &amp; energy</strong>.',
+      );
+    });
   });
 }

@@ -281,6 +281,12 @@ class PreAnkiRepository {
     if (backup['format'] != 'llm_recall_backup') {
       throw const FormatException('This is not an LLM Recall backup file.');
     }
+    final formatVersion = _backupInt(backup['formatVersion']) ?? 1;
+    if (formatVersion > 1) {
+      throw FormatException(
+        'This backup was created by a newer LLM Recall backup format ($formatVersion).',
+      );
+    }
     final sessions = _requiredBackupList(backup, 'sessions');
     final settings = _backupList(backup['settings']);
 
@@ -332,6 +338,9 @@ class PreAnkiRepository {
       path,
       options: OpenDatabaseOptions(
         version: 5,
+        onConfigure: (db) async {
+          await db.execute('PRAGMA foreign_keys = ON');
+        },
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE sessions (
@@ -469,7 +478,11 @@ List<Map<String, Object?>> _requiredBackupList(
   if (!backup.containsKey(key)) {
     throw FormatException('Backup file is missing "$key".');
   }
-  return _backupList(backup[key]);
+  final value = backup[key];
+  if (value is! List) {
+    throw FormatException('Backup "$key" must be a list.');
+  }
+  return value.map(_backupMap).toList();
 }
 
 Map<String, Object?> _backupMap(Object? value) {
@@ -493,4 +506,14 @@ Map<String, Object?> _sqliteRow(Map<String, Object?> source) {
     }
     return MapEntry(key, jsonEncode(value));
   });
+}
+
+int? _backupInt(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is String) {
+    return int.tryParse(value);
+  }
+  return null;
 }

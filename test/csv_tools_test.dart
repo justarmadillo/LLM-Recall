@@ -26,6 +26,19 @@ void main() {
       expect(result.dataRows().single, ['Capital?', 'Paris']);
     });
 
+    test('strips utf8 byte order marks from pasted or picked files', () {
+      final result = CsvTools().parse('\uFEFFFront,Back\nQ,A');
+
+      expect(result.inferredHeaders, ['Front', 'Back']);
+      expect(result.dataRows().single, ['Q', 'A']);
+    });
+
+    test('does not throw for malformed quoted csv text', () {
+      final result = CsvTools().parse('Front,Back\n"unterminated,A');
+
+      expect(result.rows, isA<List<List<String>>>());
+    });
+
     test('exports selected fields with a header row', () {
       final csv = CsvTools().exportRows(
         headers: const ['Front', 'Back', 'Tags'],
