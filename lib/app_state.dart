@@ -30,21 +30,22 @@ class PreAnkiAppState extends ChangeNotifier {
   List<PreAnkiSession> sessions = const [];
   PreAnkiSession? currentSession;
   List<Flashcard> currentCards = const [];
+  List<ReviewCard> currentReviewItems = const [];
   String? defaultExportFolder;
   String? errorMessage;
   bool isBusy = false;
   ReviewUndo? _lastUndo;
 
-  Flashcard? get nextReviewCard {
+  ReviewCard? get nextReviewItem {
     final session = currentSession;
     if (session == null) {
       return null;
     }
-    final learningCards = _reviewQueue;
-    return learningCards.firstWhereOrNull(
-          (card) => card.originalIndex >= session.reviewIndex,
+    final learningItems = _reviewQueue;
+    return learningItems.firstWhereOrNull(
+          (item) => item.reviewKey >= session.reviewIndex,
         ) ??
-        learningCards.firstOrNull;
+        learningItems.firstOrNull;
   }
 
   bool get canUndoReview => _lastUndo != null;
@@ -77,6 +78,7 @@ class PreAnkiAppState extends ChangeNotifier {
     await _run(() async {
       currentSession = await _repository.getSession(sessionId);
       currentCards = await _repository.listCards(sessionId);
+      currentReviewItems = await _repository.listReviewCards(sessionId);
       _lastUndo = null;
     });
   }
@@ -84,6 +86,7 @@ class PreAnkiAppState extends ChangeNotifier {
   Future<int?> createSessionFromImport({
     required String title,
     required String source,
+    SessionCardType cardType = SessionCardType.questionAnswer,
     required List<List<String>> rows,
     required List<String> fieldNames,
     required String frontField,
@@ -97,6 +100,7 @@ class PreAnkiAppState extends ChangeNotifier {
       sessionId = await _repository.createSession(
         title: title.trim().isEmpty ? 'Untitled session' : title.trim(),
         source: source,
+        cardType: cardType,
         fieldNames: fieldNames,
         frontField: frontField,
         revealFields: revealFields,
@@ -109,12 +113,24 @@ class PreAnkiAppState extends ChangeNotifier {
     return sessionId;
   }
 
+  Future<void> addCard(int sessionId, Map<String, String> fields) async {
+    await _run(() async {
+      await _repository.addCard(sessionId: sessionId, fields: fields);
+      if (currentSession?.id == sessionId) {
+        await _refreshCurrent(sessionId);
+      } else {
+        sessions = await _repository.listSessions();
+      }
+    });
+  }
+
   Future<void> deleteSession(int sessionId) async {
     await _run(() async {
       await _repository.deleteSession(sessionId);
       if (currentSession?.id == sessionId) {
         currentSession = null;
         currentCards = const [];
+        currentReviewItems = const [];
       }
       sessions = await _repository.listSessions();
     });
@@ -147,16 +163,16 @@ class PreAnkiAppState extends ChangeNotifier {
     });
   }
 
-  Future<void> learnedAndAdvance(Flashcard card) async {
-    await _reviewAdvance(card, reviewState: ReviewState.learned);
+  Future<void> learnedAndAdvance(ReviewCard item) async {
+    await _reviewAdvance(item, reviewState: ReviewState.learned);
   }
 
-  Future<void> againAndAdvance(Flashcard card) async {
-    await _reviewAdvance(card, reviewState: ReviewState.again);
+  Future<void> againAndAdvance(ReviewCard item) async {
+    await _reviewAdvance(item, reviewState: ReviewState.again);
   }
 
-  Future<void> deleteAndAdvance(Flashcard card) async {
-    await _reviewAdvance(card, status: CardStatus.deleted);
+  Future<void> deleteAndAdvance(ReviewCard item) async {
+    await _reviewAdvance(item, status: CardStatus.deleted);
   }
 
   Future<void> undoReviewAction() async {
@@ -166,9 +182,10 @@ class PreAnkiAppState extends ChangeNotifier {
     }
     await _run(() async {
       await _repository.setCardStatus(undo.cardId, undo.previousStatus);
-      await _repository.setCardReviewState(
-        undo.cardId,
-        undo.previousReviewState,
+      await _repository.setReviewItemState(
+        cardId: undo.cardId,
+        clozeNumber: undo.clozeNumber,
+        reviewState: undo.previousReviewState,
       );
       await _repository.updateReviewIndex(undo.sessionId, undo.previousIndex);
       await _refreshCurrent(undo.sessionId);
@@ -193,7 +210,7 @@ class PreAnkiAppState extends ChangeNotifier {
     await _run(() async {
       await _repository.updateReviewIndex(
         sessionId,
-        queue[targetIndex].originalIndex,
+        queue[targetIndex].reviewKey,
       );
       await _refreshCurrent(sessionId);
     });
@@ -328,6 +345,7 @@ class PreAnkiAppState extends ChangeNotifier {
       );
       currentSession = null;
       currentCards = const [];
+      currentReviewItems = const [];
       _lastUndo = null;
       imported = true;
     });
@@ -335,11 +353,12 @@ class PreAnkiAppState extends ChangeNotifier {
   }
 
   Future<void> _reviewAdvance(
-    Flashcard card, {
+    ReviewCard item, {
     CardStatus status = CardStatus.kept,
     ReviewState? reviewState,
   }) async {
     final session = currentSession;
+    final card = item.card;
     final cardId = card.id;
     final sessionId = session?.id;
     if (session == null || cardId == null || sessionId == null) {
@@ -349,18 +368,20 @@ class PreAnkiAppState extends ChangeNotifier {
       _lastUndo = ReviewUndo(
         sessionId: sessionId,
         cardId: cardId,
+        clozeNumber: item.clozeNumber,
         previousStatus: card.status,
-        previousReviewState: card.reviewState,
+        previousReviewState: item.reviewState,
         previousIndex: session.reviewIndex,
       );
       await _repository.setCardStatus(cardId, status);
       if (reviewState != null) {
-        await _repository.setCardReviewState(cardId, reviewState);
+        await _repository.setReviewItemState(
+          cardId: cardId,
+          clozeNumber: item.clozeNumber,
+          reviewState: reviewState,
+        );
       }
-      await _repository.updateReviewIndex(
-        sessionId,
-        (card.originalIndex + 1).clamp(0, session.totalCards),
-      );
+      await _repository.updateReviewIndex(sessionId, item.reviewKey + 1);
       await _refreshCurrent(sessionId);
     });
   }
@@ -368,12 +389,17 @@ class PreAnkiAppState extends ChangeNotifier {
   Future<void> _refreshCurrent(int sessionId) async {
     currentSession = await _repository.getSession(sessionId);
     currentCards = await _repository.listCards(sessionId);
+    currentReviewItems = await _repository.listReviewCards(sessionId);
     sessions = await _repository.listSessions();
   }
 
-  List<Flashcard> get _reviewQueue {
-    return currentCards
-        .where((card) => card.status == CardStatus.kept && !card.isLearned)
+  List<ReviewCard> get _reviewQueue {
+    return currentReviewItems
+        .where(
+          (item) =>
+              item.card.status == CardStatus.kept &&
+              item.reviewState != ReviewState.learned,
+        )
         .toList();
   }
 
@@ -388,8 +414,8 @@ class PreAnkiAppState extends ChangeNotifier {
     return targetIndex >= 0 && targetIndex < queue.length;
   }
 
-  int _reviewQueueIndex(List<Flashcard> queue, int reviewIndex) {
-    final index = queue.indexWhere((card) => card.originalIndex >= reviewIndex);
+  int _reviewQueueIndex(List<ReviewCard> queue, int reviewIndex) {
+    final index = queue.indexWhere((item) => item.reviewKey >= reviewIndex);
     return index == -1 ? 0 : index;
   }
 
@@ -414,6 +440,7 @@ class ReviewUndo {
   const ReviewUndo({
     required this.sessionId,
     required this.cardId,
+    required this.clozeNumber,
     required this.previousStatus,
     required this.previousReviewState,
     required this.previousIndex,
@@ -421,6 +448,7 @@ class ReviewUndo {
 
   final int sessionId;
   final int cardId;
+  final int clozeNumber;
   final CardStatus previousStatus;
   final ReviewState previousReviewState;
   final int previousIndex;

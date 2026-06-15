@@ -32,6 +32,7 @@
                 <data android:scheme="file"/>
                 <data android:mimeType="text/csv"/>
                 <data android:mimeType="text/comma-separated-values"/>
+                <data android:mimeType="text/tab-separated-values"/>
                 <data android:mimeType="application/csv"/>
                 <data android:mimeType="application/vnd.ms-excel"/>
                 <data android:mimeType="text/plain"/>
@@ -42,6 +43,8 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="content" android:mimeType="*/*" android:pathPattern=".*\\.csv"/>
                 <data android:scheme="file" android:mimeType="*/*" android:pathPattern=".*\\.csv"/>
+                <data android:scheme="content" android:mimeType="*/*" android:pathPattern=".*\\.tsv"/>
+                <data android:scheme="file" android:mimeType="*/*" android:pathPattern=".*\\.tsv"/>
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>

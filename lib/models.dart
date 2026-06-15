@@ -41,11 +41,33 @@ enum ReviewState {
 
 enum CardFilter { all, kept, learning, learned, deleted }
 
+const reviewKeyMultiplier = 1000000;
+
+enum SessionCardType {
+  questionAnswer,
+  cloze;
+
+  String get storageValue {
+    return switch (this) {
+      SessionCardType.questionAnswer => 'question_answer',
+      SessionCardType.cloze => 'cloze',
+    };
+  }
+
+  static SessionCardType fromStorage(String? value) {
+    return switch (value) {
+      'cloze' => SessionCardType.cloze,
+      _ => SessionCardType.questionAnswer,
+    };
+  }
+}
+
 class PreAnkiSession {
   const PreAnkiSession({
     this.id,
     required this.title,
     required this.source,
+    this.cardType = SessionCardType.questionAnswer,
     required this.fieldNames,
     required this.frontField,
     required this.revealFields,
@@ -55,6 +77,7 @@ class PreAnkiSession {
     required this.reviewIndex,
     required this.createdAt,
     required this.updatedAt,
+    this.reviewTotalCount = 0,
     this.deletedCount = 0,
     this.learnedCount = 0,
     this.againCount = 0,
@@ -63,6 +86,7 @@ class PreAnkiSession {
   final int? id;
   final String title;
   final String source;
+  final SessionCardType cardType;
   final List<String> fieldNames;
   final String frontField;
   final List<String> revealFields;
@@ -72,6 +96,7 @@ class PreAnkiSession {
   final int reviewIndex;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final int reviewTotalCount;
   final int deletedCount;
   final int learnedCount;
   final int againCount;
@@ -81,22 +106,27 @@ class PreAnkiSession {
     return count < 0 ? 0 : count;
   }
 
+  int get reviewCount {
+    return reviewTotalCount > 0 ? reviewTotalCount : keptCount;
+  }
+
   int get learningCount {
-    final count = keptCount - learnedCount;
+    final count = reviewCount - learnedCount;
     return count < 0 ? 0 : count;
   }
 
   double get progress {
-    if (keptCount <= 0) {
+    if (reviewCount <= 0) {
       return 0;
     }
-    return (learnedCount.clamp(0, keptCount)) / keptCount;
+    return (learnedCount.clamp(0, reviewCount)) / reviewCount;
   }
 
   PreAnkiSession copyWith({
     int? id,
     String? title,
     String? source,
+    SessionCardType? cardType,
     List<String>? fieldNames,
     String? frontField,
     List<String>? revealFields,
@@ -106,6 +136,7 @@ class PreAnkiSession {
     int? reviewIndex,
     DateTime? createdAt,
     DateTime? updatedAt,
+    int? reviewTotalCount,
     int? deletedCount,
     int? learnedCount,
     int? againCount,
@@ -114,6 +145,7 @@ class PreAnkiSession {
       id: id ?? this.id,
       title: title ?? this.title,
       source: source ?? this.source,
+      cardType: cardType ?? this.cardType,
       fieldNames: fieldNames ?? this.fieldNames,
       frontField: frontField ?? this.frontField,
       revealFields: revealFields ?? this.revealFields,
@@ -123,6 +155,7 @@ class PreAnkiSession {
       reviewIndex: reviewIndex ?? this.reviewIndex,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      reviewTotalCount: reviewTotalCount ?? this.reviewTotalCount,
       deletedCount: deletedCount ?? this.deletedCount,
       learnedCount: learnedCount ?? this.learnedCount,
       againCount: againCount ?? this.againCount,
@@ -134,6 +167,7 @@ class PreAnkiSession {
       'id': id,
       'title': title,
       'source': source,
+      'card_type': cardType.storageValue,
       'field_names': jsonEncode(fieldNames),
       'front_field': frontField,
       'reveal_fields': jsonEncode(revealFields),
@@ -148,6 +182,7 @@ class PreAnkiSession {
 
   factory PreAnkiSession.fromDb(
     Map<String, Object?> row, {
+    int reviewTotalCount = 0,
     int deletedCount = 0,
     int learnedCount = 0,
     int againCount = 0,
@@ -156,6 +191,7 @@ class PreAnkiSession {
       id: row['id'] as int?,
       title: row['title'] as String,
       source: row['source'] as String,
+      cardType: SessionCardType.fromStorage(row['card_type'] as String?),
       fieldNames: _decodeStringList(row['field_names'] as String?),
       frontField: row['front_field'] as String,
       revealFields: _decodeStringList(row['reveal_fields'] as String?),
@@ -165,10 +201,29 @@ class PreAnkiSession {
       reviewIndex: row['review_index'] as int? ?? 0,
       createdAt: _decodeDate(row['created_at']),
       updatedAt: _decodeDate(row['updated_at']),
+      reviewTotalCount: reviewTotalCount,
       deletedCount: deletedCount,
       learnedCount: learnedCount,
       againCount: againCount,
     );
+  }
+}
+
+class ReviewCard {
+  const ReviewCard({
+    required this.card,
+    required this.clozeNumber,
+    required this.reviewState,
+  });
+
+  final Flashcard card;
+  final int clozeNumber;
+  final ReviewState reviewState;
+
+  bool get isCloze => clozeNumber > 0;
+
+  int get reviewKey {
+    return card.originalIndex * reviewKeyMultiplier + clozeNumber;
   }
 }
 

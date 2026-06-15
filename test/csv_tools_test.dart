@@ -26,6 +26,17 @@ void main() {
       expect(result.dataRows().single, ['Capital?', 'Paris']);
     });
 
+    test('detects tab and pipe delimiters', () {
+      final tab = CsvTools().parse('Term\tDefinition\nCell\tSmall unit');
+      final pipe = CsvTools().parse('Front|Back\nQ|A');
+
+      expect(tab.delimiter, '\t');
+      expect(tab.inferredHeaders, ['Term', 'Definition']);
+      expect(tab.dataRows().single, ['Cell', 'Small unit']);
+      expect(pipe.delimiter, '|');
+      expect(pipe.dataRows().single, ['Q', 'A']);
+    });
+
     test('strips utf8 byte order marks from pasted or picked files', () {
       final result = CsvTools().parse('\uFEFFFront,Back\nQ,A');
 
@@ -33,10 +44,52 @@ void main() {
       expect(result.dataRows().single, ['Q', 'A']);
     });
 
+    test('decodes utf16 and windows single-byte files', () {
+      final tools = CsvTools();
+      final utf16Bytes = _utf16LeWithBom('Front\tBack\nQuestion\tRéponse');
+      final windows1252Bytes = [
+        ...'Front,Back\nQ,'.codeUnits,
+        0x93,
+        ...'smart'.codeUnits,
+        0x94,
+      ];
+
+      expect(tools.parse(tools.decodeBytes(utf16Bytes)).dataRows().single, [
+        'Question',
+        'Réponse',
+      ]);
+      expect(
+        tools.parse(tools.decodeBytes(windows1252Bytes)).dataRows().single,
+        ['Q', '“smart”'],
+      );
+    });
+
     test('does not throw for malformed quoted csv text', () {
       final result = CsvTools().parse('Front,Back\n"unterminated,A');
 
-      expect(result.rows, isA<List<List<String>>>());
+      expect(result.delimiter, ',');
+      expect(result.inferredHeaders, ['Front', 'Back']);
+      expect(result.dataRows().single, ['unterminated,A', '']);
+    });
+
+    test('preserves intentional whitespace inside imported fields', () {
+      final result = CsvTools().parse(
+        'Front,Back\n'
+        '"  code\n'
+        '  line  "," answer "',
+      );
+
+      expect(result.dataRows().single, ['  code\n  line  ', ' answer ']);
+    });
+
+    test('is conservative for short content rows without known headers', () {
+      final result = CsvTools().parse('Cell,Mitochondria\nDNA,Nucleus');
+
+      expect(result.hasHeader, isFalse);
+      expect(result.dataRows(), [
+        ['Cell', 'Mitochondria'],
+        ['DNA', 'Nucleus'],
+      ]);
     });
 
     test('exports selected fields with a header row', () {
@@ -56,4 +109,14 @@ void main() {
       expect(csv, isNot(contains('geo')));
     });
   });
+}
+
+List<int> _utf16LeWithBom(String value) {
+  final bytes = <int>[0xFF, 0xFE];
+  for (final codeUnit in value.codeUnits) {
+    bytes
+      ..add(codeUnit & 0xFF)
+      ..add(codeUnit >> 8);
+  }
+  return bytes;
 }

@@ -47,4 +47,50 @@ void main() {
     expect(savedFields!['Front'], 'Capital?');
     expect(savedFields!['Back'], 'Paris, France');
   });
+
+  testWidgets('add card dialog wraps selected cloze text', (tester) async {
+    Map<String, String>? savedFields;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ElevatedButton(
+            onPressed: () async {
+              savedFields = await showAddCardDialog(
+                context: tester.element(find.text('Add card')),
+                fieldOrder: const ['Text', 'Extra'],
+                primaryField: 'Text',
+                isClozeSession: true,
+              );
+            },
+            child: const Text('Add card'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Add card'));
+    await tester.pump();
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Text'),
+      'The mitochondrion makes ATP',
+    );
+    final textField = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Text'),
+    );
+    textField.controller!.selection = const TextSelection(
+      baseOffset: 4,
+      extentOffset: 17,
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Cloze selected text'));
+    await tester.pump();
+    await tester.tap(find.text('Add'));
+    await tester.pump();
+
+    expect(savedFields, isNotNull);
+    expect(savedFields!['Text'], 'The {{c1::mitochondrion}} makes ATP');
+  });
 }

@@ -253,9 +253,15 @@ class _SessionTile extends StatelessWidget {
             children: [
               AppBadge(
                 icon: Icons.style_outlined,
-                label: '${session.totalCards} cards',
+                label: '${session.reviewCount} review cards',
                 color: AppColors.inkMuted,
               ),
+              if (session.reviewCount != session.totalCards)
+                AppBadge(
+                  icon: Icons.notes_outlined,
+                  label: '${session.totalCards} notes',
+                  color: AppColors.inkMuted,
+                ),
               AppBadge(
                 icon: Icons.school_outlined,
                 label: '${session.learningCount} learning',

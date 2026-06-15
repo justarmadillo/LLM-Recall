@@ -111,7 +111,7 @@ class _SessionScreenState extends State<SessionScreen> {
                       _ReviewPane(
                         appState: appState,
                         session: session,
-                        card: appState.nextReviewCard,
+                        item: appState.nextReviewItem,
                       ),
                       _CardListPane(
                         appState: appState,
@@ -134,12 +134,12 @@ class _ReviewPane extends StatefulWidget {
   const _ReviewPane({
     required this.appState,
     required this.session,
-    required this.card,
+    required this.item,
   });
 
   final PreAnkiAppState appState;
   final PreAnkiSession session;
-  final Flashcard? card;
+  final ReviewCard? item;
 
   @override
   State<_ReviewPane> createState() => _ReviewPaneState();
@@ -153,7 +153,10 @@ class _ReviewPaneState extends State<_ReviewPane> {
   @override
   void didUpdateWidget(covariant _ReviewPane oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final nextId = widget.card?.id;
+    final item = widget.item;
+    final nextId = item == null
+        ? null
+        : item.card.id.hashCode ^ item.clozeNumber.hashCode;
     if (_cardId != nextId) {
       _cardId = nextId;
       _revealed = false;
@@ -163,16 +166,20 @@ class _ReviewPaneState extends State<_ReviewPane> {
 
   @override
   Widget build(BuildContext context) {
-    final card = widget.card;
-    if (card == null) {
+    final item = widget.item;
+    if (item == null) {
       return _DonePane(appState: widget.appState, session: widget.session);
     }
 
+    final card = item.card;
     final front = card.fields[widget.session.frontField] ?? '';
-    final isCloze = ClozeTools.hasCloze(front);
-    final clozeNumbers = ClozeTools.clozeNumbers(front);
-    final displayFront = isCloze ? ClozeTools.questionText(front) : front;
-    final clozeAnswer = isCloze ? ClozeTools.answerHtml(front) : null;
+    final isCloze = item.isCloze;
+    final displayFront = isCloze
+        ? ClozeTools.questionTextForNumber(front, item.clozeNumber)
+        : front;
+    final clozeAnswer = isCloze
+        ? ClozeTools.answerHtmlForNumber(front, item.clozeNumber)
+        : null;
     final revealFields = widget.session.revealFields
         .where((field) => field != widget.session.frontField)
         .toList();
@@ -188,10 +195,10 @@ class _ReviewPaneState extends State<_ReviewPane> {
         final offset = _dragOffset;
         setState(() => _dragOffset = 0);
         if (velocity < -350 || offset < -84) {
-          _markAgain(card);
+          _markAgain(item);
         }
         if (velocity > 350 || offset > 84) {
-          _markLearned(card);
+          _markLearned(item);
         }
       },
       onHorizontalDragCancel: () => setState(() => _dragOffset = 0),
@@ -208,16 +215,14 @@ class _ReviewPaneState extends State<_ReviewPane> {
               front: _ReviewCardFace(
                 badges: [
                   AppBadge(
-                    label: card.reviewState.label,
-                    icon: card.reviewState == ReviewState.again
+                    label: item.reviewState.label,
+                    icon: item.reviewState == ReviewState.again
                         ? Icons.refresh_outlined
                         : Icons.local_fire_department_outlined,
                   ),
                   if (isCloze)
                     AppBadge(
-                      label: clozeNumbers.isEmpty
-                          ? 'Cloze'
-                          : 'Cloze ${clozeNumbers.map((n) => 'c$n').join(', ')}',
+                      label: 'Cloze c${item.clozeNumber}',
                       icon: Icons.data_object_outlined,
                       color: AppColors.accentTeal,
                     ),
@@ -235,8 +240,8 @@ class _ReviewPaneState extends State<_ReviewPane> {
                     icon: Icons.visibility_outlined,
                   ),
                   if (isCloze)
-                    const AppBadge(
-                      label: 'Cloze',
+                    AppBadge(
+                      label: 'Cloze c${item.clozeNumber}',
                       icon: Icons.data_object_outlined,
                       color: AppColors.accentTeal,
                     ),
@@ -283,7 +288,7 @@ class _ReviewPaneState extends State<_ReviewPane> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => _markAgain(card),
+                  onPressed: () => _markAgain(item),
                   icon: const Icon(Icons.arrow_back_outlined),
                   label: const Text('Again'),
                   style: OutlinedButton.styleFrom(
@@ -296,7 +301,7 @@ class _ReviewPaneState extends State<_ReviewPane> {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: () => _markLearned(card),
+                  onPressed: () => _markLearned(item),
                   icon: const Icon(Icons.arrow_forward_outlined),
                   label: const Text('Good'),
                   style: FilledButton.styleFrom(
@@ -329,7 +334,7 @@ class _ReviewPaneState extends State<_ReviewPane> {
           ),
           const SizedBox(height: 10),
           OutlinedButton.icon(
-            onPressed: () => _delete(card),
+            onPressed: () => _delete(item),
             icon: const Icon(Icons.delete_outline),
             label: const Text('Delete card'),
             style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
@@ -362,22 +367,22 @@ class _ReviewPaneState extends State<_ReviewPane> {
     );
   }
 
-  Future<void> _markAgain(Flashcard card) async {
-    await widget.appState.againAndAdvance(card);
+  Future<void> _markAgain(ReviewCard item) async {
+    await widget.appState.againAndAdvance(item);
     if (mounted) {
       setState(() => _revealed = false);
     }
   }
 
-  Future<void> _markLearned(Flashcard card) async {
-    await widget.appState.learnedAndAdvance(card);
+  Future<void> _markLearned(ReviewCard item) async {
+    await widget.appState.learnedAndAdvance(item);
     if (mounted) {
       setState(() => _revealed = false);
     }
   }
 
-  Future<void> _delete(Flashcard card) async {
-    await widget.appState.deleteAndAdvance(card);
+  Future<void> _delete(ReviewCard item) async {
+    await widget.appState.deleteAndAdvance(item);
     if (mounted) {
       setState(() => _revealed = false);
     }
@@ -402,6 +407,8 @@ class _ReviewPaneState extends State<_ReviewPane> {
       context: context,
       card: card,
       fieldOrder: widget.session.fieldNames,
+      isClozeSession: widget.session.cardType == SessionCardType.cloze,
+      clozeField: widget.session.frontField,
     );
     if (fields == null) {
       return;
@@ -465,71 +472,75 @@ class _SwipeReviewCard extends StatelessWidget {
     final color = isGood ? AppColors.good : AppColors.again;
     final label = isGood ? 'GOOD' : 'AGAIN';
     final icon = isGood ? Icons.check_circle_outline : Icons.refresh_outlined;
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Positioned.fill(
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 90),
-            opacity: progress,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppRadii.lg),
-                border: Border.all(color: color.withValues(alpha: 0.35)),
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          top: 22,
-          left: isGood ? null : 24,
-          right: isGood ? 24 : null,
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 90),
-            opacity: progress,
-            child: Transform.rotate(
-              angle: isGood ? 0.12 : -0.12,
+    return SizedBox(
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 90),
+              opacity: progress,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(AppRadii.full),
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(AppRadii.lg),
+                  border: Border.all(color: color.withValues(alpha: 0.35)),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 8,
+              ),
+            ),
+          ),
+          Positioned(
+            top: 22,
+            left: isGood ? null : 24,
+            right: isGood ? 24 : null,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 90),
+              opacity: progress,
+              child: Transform.rotate(
+                angle: isGood ? 0.12 : -0.12,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(AppRadii.full),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(icon, size: 18, color: Colors.white),
-                      const SizedBox(width: 6),
-                      Text(
-                        label,
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, size: 18, color: Colors.white),
+                        const SizedBox(width: 6),
+                        Text(
+                          label,
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0,
+                              ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-        AnimatedContainer(
-          duration: dragOffset == 0
-              ? const Duration(milliseconds: 160)
-              : Duration.zero,
-          curve: Curves.easeOutCubic,
-          transform: Matrix4.translationValues(dragOffset, 0, 0)
-            ..rotateZ(dragOffset / 1400),
-          child: child,
-        ),
-      ],
+          AnimatedContainer(
+            duration: dragOffset == 0
+                ? const Duration(milliseconds: 160)
+                : Duration.zero,
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(dragOffset, 0, 0)
+              ..rotateZ(dragOffset / 1400),
+            child: SizedBox(width: double.infinity, child: child),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -547,11 +558,16 @@ class _ReviewCardFace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppSurface(
-      shadow: true,
-      padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 280),
+    final height = (MediaQuery.sizeOf(context).height * 0.42).clamp(
+      340.0,
+      460.0,
+    );
+    return SizedBox(
+      width: double.infinity,
+      height: height,
+      child: AppSurface(
+        shadow: true,
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -559,7 +575,11 @@ class _ReviewCardFace extends StatelessWidget {
             const SizedBox(height: 18),
             Text(field, style: Theme.of(context).textTheme.labelLarge),
             const SizedBox(height: 10),
-            child,
+            Expanded(
+              child: SingleChildScrollView(
+                child: SizedBox(width: double.infinity, child: child),
+              ),
+            ),
           ],
         ),
       ),
@@ -648,7 +668,7 @@ class _ReviewProgress extends StatelessWidget {
                 ),
               ),
               Text(
-                '${session.learnedCount}/${session.keptCount}',
+                '${session.learnedCount}/${session.reviewCount}',
                 style: Theme.of(context).textTheme.labelLarge,
               ),
             ],
@@ -746,28 +766,34 @@ class _RevealBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: AppColors.canvasSoft,
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        border: Border.all(color: AppColors.hairline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(field, style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            HtmlCardText(
-              value: value,
-              textStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: AppColors.ink,
-                fontWeight: FontWeight.w400,
-                height: 1.45,
-              ),
+    return SizedBox(
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.canvasSoft,
+          borderRadius: BorderRadius.circular(AppRadii.md),
+          border: Border.all(color: AppColors.hairline),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 96),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(field, style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 6),
+                HtmlCardText(
+                  value: value,
+                  textStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: AppColors.ink,
+                    fontWeight: FontWeight.w400,
+                    height: 1.45,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -848,6 +874,14 @@ class _CardListPaneState extends State<_CardListPane> {
                   ),
                 ),
               ),
+              const SizedBox(width: 10),
+              IconButton.filled(
+                tooltip: 'Add card',
+                onPressed: widget.session.id == null
+                    ? null
+                    : () => _addCard(context),
+                icon: const Icon(Icons.add_outlined),
+              ),
             ],
           ),
         ),
@@ -868,6 +902,30 @@ class _CardListPaneState extends State<_CardListPane> {
         ),
       ],
     );
+  }
+
+  Future<void> _addCard(BuildContext context) async {
+    final sessionId = widget.session.id;
+    if (sessionId == null) {
+      return;
+    }
+    final fields = await showAddCardDialog(
+      context: context,
+      fieldOrder: widget.session.fieldNames,
+      primaryField: widget.session.frontField,
+      isClozeSession: widget.session.cardType == SessionCardType.cloze,
+    );
+    if (fields == null) {
+      return;
+    }
+    await widget.appState.addCard(sessionId, fields);
+    if (!mounted || !context.mounted) {
+      return;
+    }
+    setState(() => _filter = CardFilter.all);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Card added')));
   }
 }
 
@@ -1013,6 +1071,8 @@ class _QuickReviewCard extends StatelessWidget {
       context: context,
       card: card,
       fieldOrder: session.fieldNames,
+      isClozeSession: session.cardType == SessionCardType.cloze,
+      clozeField: session.frontField,
     );
     if (fields == null) {
       return;

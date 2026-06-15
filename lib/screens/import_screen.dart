@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -10,6 +9,7 @@ import '../cloze_tools.dart';
 import '../csv_tools.dart';
 import '../design_system.dart';
 import '../main.dart';
+import '../models.dart';
 import 'session_screen.dart';
 
 enum ImportFormat {
@@ -193,7 +193,7 @@ class _ImportScreenState extends State<ImportScreen> {
     try {
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const ['csv', 'txt'],
+        allowedExtensions: const ['csv', 'tsv', 'txt'],
         withData: true,
       );
       if (!mounted || result == null || result.files.isEmpty) {
@@ -221,13 +221,13 @@ class _ImportScreenState extends State<ImportScreen> {
   Future<String> _readPickedFileText(PlatformFile file) async {
     final bytes = file.bytes;
     if (bytes != null) {
-      return utf8.decode(bytes, allowMalformed: true);
+      return _csvTools.decodeBytes(bytes);
     }
     final path = file.path;
     if (path == null) {
       throw const FileSystemException('Could not read picked file.');
     }
-    return utf8.decode(await File(path).readAsBytes(), allowMalformed: true);
+    return _csvTools.decodeBytes(await File(path).readAsBytes());
   }
 
   void _setFormError(String message) {
@@ -272,7 +272,7 @@ class _ImportScreenState extends State<ImportScreen> {
       _formError = null;
       _titleController.text = _sourceName == null
           ? 'CSV review ${DateFormat('MMM d, HH:mm').format(DateTime.now())}'
-          : _sourceName!.replaceFirst(RegExp(r'\.(csv|txt)$'), '');
+          : _sourceName!.replaceFirst(RegExp(r'\.(csv|tsv|txt)$'), '');
       _resetMapping();
     });
   }
@@ -318,6 +318,9 @@ class _ImportScreenState extends State<ImportScreen> {
     final sessionId = await appState.createSessionFromImport(
       title: _titleController.text,
       source: _sourceName ?? 'Pasted CSV',
+      cardType: _format == ImportFormat.cloze
+          ? SessionCardType.cloze
+          : SessionCardType.questionAnswer,
       rows: dataRows,
       fieldNames: fields,
       frontField: primaryField,

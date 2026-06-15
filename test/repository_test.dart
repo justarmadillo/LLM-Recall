@@ -107,6 +107,7 @@ void main() {
     final sessionId = await repository.createSession(
       title: 'History',
       source: 'history.csv',
+      cardType: SessionCardType.cloze,
       fieldNames: const ['Front', 'Back'],
       frontField: 'Front',
       revealFields: const ['Back'],
@@ -133,9 +134,95 @@ void main() {
     final restoredCards = await restored.listCards(restoredSessions.single.id!);
 
     expect(restoredSessions.single.title, 'History');
+    expect(restoredSessions.single.cardType, SessionCardType.cloze);
     expect(restoredSessions.single.learnedCount, 1);
     expect(restoredCards.single.fields['Back'], '<b>1215</b>');
     expect(await restored.getSetting('default_export_folder'), 'D:\\Recall');
+  });
+
+  test('adds a card at the end of an existing session', () async {
+    final sessionId = await repository.createSession(
+      title: 'Additions',
+      source: 'manual',
+      fieldNames: const ['Front', 'Back'],
+      frontField: 'Front',
+      revealFields: const ['Back'],
+      exportFields: const ['Front', 'Back'],
+      includeHeader: true,
+      cardFields: const [
+        {'Front': 'First', 'Back': 'One'},
+      ],
+    );
+
+    final addedId = await repository.addCard(
+      sessionId: sessionId,
+      fields: const {'Front': 'Second', 'Back': 'Two'},
+    );
+    final session = await repository.getSession(sessionId);
+    final cards = await repository.listCards(sessionId);
+
+    expect(addedId, isPositive);
+    expect(session!.totalCards, 2);
+    expect(cards.last.originalIndex, 1);
+    expect(cards.last.reviewState, ReviewState.newCard);
+    expect(cards.last.fields['Front'], 'Second');
+  });
+
+  test('expands cloze notes into separate persisted review items', () async {
+    final sessionId = await repository.createSession(
+      title: 'Cloze expansion',
+      source: 'cloze.csv',
+      cardType: SessionCardType.cloze,
+      fieldNames: const ['Text', 'Extra'],
+      frontField: 'Text',
+      revealFields: const ['Extra'],
+      exportFields: const ['Text', 'Extra'],
+      includeHeader: true,
+      cardFields: const [
+        {
+          'Text':
+              '{{c1::Mitochondria}} make {{c2::ATP}} and {{c1::ribosomes}} make proteins.',
+          'Extra': 'Cell biology',
+        },
+      ],
+    );
+
+    var session = await repository.getSession(sessionId);
+    var reviewItems = await repository.listReviewCards(sessionId);
+    var cards = await repository.listCards(sessionId);
+
+    expect(session!.totalCards, 1);
+    expect(session.reviewCount, 2);
+    expect(reviewItems.map((item) => item.clozeNumber), [1, 2]);
+    expect(cards.single.reviewState, ReviewState.newCard);
+
+    await repository.setReviewItemState(
+      cardId: cards.single.id!,
+      clozeNumber: 1,
+      reviewState: ReviewState.learned,
+    );
+
+    session = await repository.getSession(sessionId);
+    reviewItems = await repository.listReviewCards(sessionId);
+    cards = await repository.listCards(sessionId);
+
+    expect(session!.learnedCount, 1);
+    expect(session.learningCount, 1);
+    expect(reviewItems.first.reviewState, ReviewState.learned);
+    expect(cards.single.reviewState, ReviewState.newCard);
+
+    await repository.setReviewItemState(
+      cardId: cards.single.id!,
+      clozeNumber: 2,
+      reviewState: ReviewState.learned,
+    );
+
+    session = await repository.getSession(sessionId);
+    cards = await repository.listCards(sessionId);
+
+    expect(session!.learnedCount, 2);
+    expect(session.progress, 1);
+    expect(cards.single.reviewState, ReviewState.learned);
   });
 
   test('rejects malformed backups before replacing existing data', () async {

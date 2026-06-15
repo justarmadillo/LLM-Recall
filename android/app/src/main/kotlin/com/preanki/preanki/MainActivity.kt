@@ -7,6 +7,7 @@ import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.nio.charset.Charset
 
 class MainActivity : FlutterActivity() {
     private val importChannelName = "llm_recall/imports"
@@ -77,7 +78,7 @@ class MainActivity : FlutterActivity() {
     private fun readUriPayload(uri: Uri): Map<String, String>? {
         return try {
             contentResolver.openInputStream(uri)?.use { stream ->
-                val text = stream.bufferedReader(Charsets.UTF_8).readText()
+                val text = decodeText(stream.readBytes())
                 if (text.isBlank()) {
                     null
                 } else {
@@ -90,6 +91,55 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun decodeText(bytes: ByteArray): String {
+        if (bytes.isEmpty()) {
+            return ""
+        }
+        if (bytes.startsWith(0xEF, 0xBB, 0xBF)) {
+            return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+        }
+        if (bytes.startsWith(0xFF, 0xFE)) {
+            return String(bytes, 2, bytes.size - 2, Charset.forName("UTF-16LE"))
+        }
+        if (bytes.startsWith(0xFE, 0xFF)) {
+            return String(bytes, 2, bytes.size - 2, Charset.forName("UTF-16BE"))
+        }
+
+        val sampleLength = minOf(bytes.size, 512)
+        var evenNulls = 0
+        var oddNulls = 0
+        for (index in 0 until sampleLength) {
+            if (bytes[index].toInt() != 0) {
+                continue
+            }
+            if (index % 2 == 0) {
+                evenNulls += 1
+            } else {
+                oddNulls += 1
+            }
+        }
+        val threshold = sampleLength / 8
+        if (sampleLength >= 8 && oddNulls > threshold && oddNulls > evenNulls * 3) {
+            return String(bytes, Charset.forName("UTF-16LE"))
+        }
+        if (sampleLength >= 8 && evenNulls > threshold && evenNulls > oddNulls * 3) {
+            return String(bytes, Charset.forName("UTF-16BE"))
+        }
+        return String(bytes, Charsets.UTF_8)
+    }
+
+    private fun ByteArray.startsWith(vararg prefix: Int): Boolean {
+        if (size < prefix.size) {
+            return false
+        }
+        for (index in prefix.indices) {
+            if ((this[index].toInt() and 0xFF) != prefix[index]) {
+                return false
+            }
+        }
+        return true
     }
 
     private fun displayName(uri: Uri): String {

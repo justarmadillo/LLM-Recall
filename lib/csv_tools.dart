@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:csv/csv.dart';
 
 class CsvImportResult {
@@ -35,7 +37,38 @@ class CsvImportResult {
 }
 
 class CsvTools {
-  static const delimiters = [',', ';', '\t'];
+  static const delimiters = [',', ';', '\t', '|'];
+
+  String decodeBytes(List<int> bytes) {
+    if (bytes.isEmpty) {
+      return '';
+    }
+    if (_startsWith(bytes, const [0xEF, 0xBB, 0xBF])) {
+      return utf8.decode(bytes.sublist(3), allowMalformed: true);
+    }
+    if (_startsWith(bytes, const [0xFF, 0xFE])) {
+      return _decodeUtf16(bytes, littleEndian: true, offset: 2);
+    }
+    if (_startsWith(bytes, const [0xFE, 0xFF])) {
+      return _decodeUtf16(bytes, littleEndian: false, offset: 2);
+    }
+
+    final utf16Guess = _guessUtf16Endianness(bytes);
+    if (utf16Guess != null) {
+      return _decodeUtf16(bytes, littleEndian: utf16Guess);
+    }
+
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      final malformedUtf8 = utf8.decode(bytes, allowMalformed: true);
+      final replacementCount = '\uFFFD'.allMatches(malformedUtf8).length;
+      if (replacementCount > 0 && _looksLikeSingleByteText(bytes)) {
+        return _decodeWindows1252(bytes);
+      }
+      return malformedUtf8;
+    }
+  }
 
   CsvImportResult parse(String input) {
     final normalized = input
@@ -95,17 +128,76 @@ class CsvTools {
   }
 
   List<List<String>> _parseWithDelimiter(String input, String delimiter) {
-    final List<List<dynamic>> parsed;
     try {
-      parsed = CsvDecoder(
+      final parsed = CsvDecoder(
         fieldDelimiter: delimiter,
         dynamicTyping: false,
       ).convert(input);
+      return parsed
+          .map((row) => row.map((cell) => cell?.toString() ?? '').toList())
+          .where((row) => row.any((cell) => cell.trim().isNotEmpty))
+          .toList();
     } on FormatException {
-      return const [];
+      return _relaxedParseWithDelimiter(input, delimiter);
     }
-    return parsed
-        .map((row) => row.map((cell) => cell?.toString() ?? '').toList())
+  }
+
+  List<List<String>> _relaxedParseWithDelimiter(
+    String input,
+    String delimiter,
+  ) {
+    final rows = <List<String>>[];
+    var row = <String>[];
+    final cell = StringBuffer();
+    var inQuotes = false;
+    var quoteStartedCell = false;
+
+    void endCell() {
+      row.add(cell.toString());
+      cell.clear();
+      quoteStartedCell = false;
+    }
+
+    void endRow() {
+      endCell();
+      rows.add(row);
+      row = <String>[];
+    }
+
+    for (var index = 0; index < input.length; index += 1) {
+      final char = input[index];
+      final next = index + 1 < input.length ? input[index + 1] : null;
+
+      if (char == '"') {
+        if (inQuotes && next == '"') {
+          cell.write('"');
+          index += 1;
+        } else if (!inQuotes && cell.toString().trim().isEmpty) {
+          inQuotes = true;
+          quoteStartedCell = true;
+          if (cell.length > 0) {
+            cell.clear();
+          }
+        } else if (inQuotes) {
+          inQuotes = false;
+        } else {
+          cell.write(char);
+        }
+      } else if (!inQuotes && char == delimiter) {
+        endCell();
+      } else if (!inQuotes && char == '\n') {
+        endRow();
+      } else {
+        if (!quoteStartedCell || char != '\r') {
+          cell.write(char);
+        }
+      }
+    }
+    if (cell.length > 0 || row.isNotEmpty) {
+      endRow();
+    }
+
+    return rows
         .where((row) => row.any((cell) => cell.trim().isNotEmpty))
         .toList();
   }
@@ -120,7 +212,7 @@ class CsvTools {
     return rows.map((row) {
       return List.generate(
         maxColumns,
-        (index) => index < row.length ? row[index].trim() : '',
+        (index) => index < row.length ? row[index] : '',
       );
     }).toList();
   }
@@ -175,15 +267,25 @@ class CsvTools {
     final secondContentCount = second
         .where((cell) => cell.length > 40 || cell.contains('?'))
         .length;
-    final knownHeader = first.any((cell) {
+    final knownHeaderCount = first.where((cell) {
       final lower = cell.toLowerCase();
       return lower == 'front' ||
           lower == 'back' ||
+          lower == 'text' ||
+          lower == 'term' ||
+          lower == 'definition' ||
+          lower == 'prompt' ||
           lower == 'question' ||
           lower == 'answer' ||
+          lower == 'response' ||
           lower == 'tags' ||
+          lower == 'tag' ||
+          lower == 'cloze' ||
+          lower == 'note' ||
+          lower == 'notes' ||
+          lower == 'explanation' ||
           lower == 'extra';
-    });
+    }).length;
 
     var score = 0;
     if (uniqueLabels) {
@@ -198,10 +300,10 @@ class CsvTools {
     if (secondContentCount > 0) {
       score += 1;
     }
-    if (knownHeader) {
+    if (knownHeaderCount > 0) {
       score += 2;
     }
-    return score >= 3;
+    return knownHeaderCount > 0 ? score >= 3 : score >= 4;
   }
 
   bool _isLabelLike(String value) {
@@ -215,6 +317,116 @@ class CsvTools {
     return double.tryParse(value.replaceAll(',', '.')) != null;
   }
 }
+
+bool _startsWith(List<int> bytes, List<int> prefix) {
+  if (bytes.length < prefix.length) {
+    return false;
+  }
+  for (var index = 0; index < prefix.length; index += 1) {
+    if (bytes[index] != prefix[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+String _decodeUtf16(
+  List<int> bytes, {
+  required bool littleEndian,
+  int offset = 0,
+}) {
+  final units = <int>[];
+  for (var index = offset; index + 1 < bytes.length; index += 2) {
+    final first = bytes[index];
+    final second = bytes[index + 1];
+    final unit = littleEndian ? first | (second << 8) : (first << 8) | second;
+    if (unit != 0xFEFF) {
+      units.add(unit);
+    }
+  }
+  return String.fromCharCodes(units);
+}
+
+bool? _guessUtf16Endianness(List<int> bytes) {
+  final sampleLength = bytes.length < 512 ? bytes.length : 512;
+  if (sampleLength < 8) {
+    return null;
+  }
+  var evenNulls = 0;
+  var oddNulls = 0;
+  for (var index = 0; index < sampleLength; index += 1) {
+    if (bytes[index] != 0) {
+      continue;
+    }
+    if (index.isEven) {
+      evenNulls += 1;
+    } else {
+      oddNulls += 1;
+    }
+  }
+  final threshold = sampleLength ~/ 8;
+  if (oddNulls > threshold && oddNulls > evenNulls * 3) {
+    return true;
+  }
+  if (evenNulls > threshold && evenNulls > oddNulls * 3) {
+    return false;
+  }
+  return null;
+}
+
+bool _looksLikeSingleByteText(List<int> bytes) {
+  if (bytes.any((byte) => byte == 0)) {
+    return false;
+  }
+  final highBytes = bytes.where((byte) => byte >= 0x80).length;
+  return highBytes > 0 && highBytes <= bytes.length * 0.35;
+}
+
+String _decodeWindows1252(List<int> bytes) {
+  return String.fromCharCodes(
+    bytes.map((byte) {
+      if (byte < 0x80 || byte >= 0xA0) {
+        return byte;
+      }
+      return _windows1252CodePoints[byte - 0x80] ?? byte;
+    }),
+  );
+}
+
+const _windows1252CodePoints = <int?>[
+  0x20AC,
+  null,
+  0x201A,
+  0x0192,
+  0x201E,
+  0x2026,
+  0x2020,
+  0x2021,
+  0x02C6,
+  0x2030,
+  0x0160,
+  0x2039,
+  0x0152,
+  null,
+  0x017D,
+  null,
+  null,
+  0x2018,
+  0x2019,
+  0x201C,
+  0x201D,
+  0x2022,
+  0x2013,
+  0x2014,
+  0x02DC,
+  0x2122,
+  0x0161,
+  0x203A,
+  0x0153,
+  null,
+  0x017E,
+  0x0178,
+];
 
 String _cleanHeader(String value, int index) {
   final cleaned = value.trim();

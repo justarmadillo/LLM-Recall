@@ -67,6 +67,7 @@ Tables:
 
 - `sessions`
   - `title`, `source`
+  - `card_type`: `question_answer` or `cloze`.
   - `field_names`: JSON list of all field names from import.
   - `front_field`: the selected question/cloze field.
   - `reveal_fields`: JSON list of fields shown on the card back.
@@ -77,77 +78,106 @@ Tables:
   - `session_id`, `original_index`
   - `fields_json`: JSON object of field name to content.
   - `status`: `kept` or `deleted`.
-  - `review_state`: `new`, `again`, or `learned`.
+  - `review_state`: aggregate `new`, `again`, or `learned` for Cards-tab filtering/badges.
   - timestamps.
+- `card_review_items`
+  - `card_id`, `cloze_number`
+  - `cloze_number = 0` means a normal Q/A review item or a cloze-session row with no valid cloze syntax.
+  - `cloze_number > 0` maps to an Anki-style cloze card such as `c1`, `c2`, `c3`.
+  - `review_state`: per-generated-review-card state.
 - `app_settings`
   - Currently stores `default_export_folder`.
 
 Schema version:
 
-- Current database version is `5`.
+- Current database version is `7`.
 - Version 5 removed the old presets table from active schema. Repository backup/import still strips legacy `preset_id` for compatibility with old backups/databases.
+- Version 6 added persisted session card type. Older sessions are migrated to `cloze` when stored card JSON contains `{{c...::...}}`; otherwise they remain `question_answer`.
+- Version 7 added `card_review_items` and changed `sessions.review_index` to an expanded review-item key. Existing review indexes are multiplied by `reviewKeyMultiplier`.
 
 Backup format:
 
 - `format`: `llm_recall_backup`
 - `formatVersion`: `1`
 - `databaseVersion`: current DB schema version
-- `sessions`: session rows plus cards
+- `sessions`: session rows plus cards plus optional `reviewItems`
 - `settings`: settings rows
 
 ## Import Flow
 
 1. `ImportScreen` receives text from file picker, clipboard, or `ImportBridge`.
-2. `CsvTools.parse` normalizes line endings, parses with comma/semicolon/tab, chooses the best delimiter, normalizes row widths, and detects whether the first row is likely a header.
-3. The user confirms header behavior, sets a session title, chooses Question/Answer or Cloze, and checks one primary field.
-4. Field names are normalized to be unique.
-5. Validation rules:
+2. Picked files are decoded through `CsvTools.decodeBytes`, which handles UTF-8 BOMs, UTF-16 LE/BE BOMs, UTF-16 null-byte heuristics, strict UTF-8, malformed UTF-8 fallback, and Windows-1252-style smart quotes.
+3. `CsvTools.parse` normalizes line endings, parses with comma/semicolon/tab/pipe, chooses the best delimiter, normalizes row widths, and detects whether the first row is likely a header.
+4. If the strict CSV parser rejects malformed quotes, `CsvTools` falls back to a relaxed delimiter parser so LLM-generated unterminated quotes can still produce a usable preview instead of silently becoming one-column data under the wrong delimiter.
+5. Cell content is intentionally not trimmed during parsing. This preserves code indentation, leading/trailing spaces, and HTML field content. Field names are cleaned separately in the import mapping UI.
+6. Header detection is conservative for short content rows. Known header labels such as `Front`, `Back`, `Question`, `Answer`, `Term`, `Definition`, `Text`, `Cloze`, `Extra`, and `Tags` are weighted, but short first-row content such as `Cell,Mitochondria` should not be auto-dropped as a header.
+7. The user confirms header behavior, sets a session title, chooses Question/Answer or Cloze, and checks one primary field.
+8. Field names are normalized to be unique.
+9. Validation rules:
    - Every field must have a name.
    - Field names must be unique.
    - Question/Answer needs at least two fields.
    - Cloze requires the selected cloze field to contain `{{c1::...}}`-style text in at least one row.
-6. `AppState.createSessionFromImport` converts rows to card field maps and asks `Repository.createSession` to persist them.
+10. `AppState.createSessionFromImport` converts rows to card field maps and asks `Repository.createSession` to persist them.
+11. The selected import format is stored as `session.cardType`, which drives later add/edit behavior.
 
 There are no saved import presets by design. Each CSV can have a different shape.
 
 ## Review Flow
 
-`AppState.nextReviewCard` selects from the review queue:
+`AppState.nextReviewItem` selects from the generated review queue:
 
-- kept cards only
+- kept cards only, via their generated `ReviewCard` items
 - not learned
-- first card with `originalIndex >= session.reviewIndex`, wrapping to the first available card when needed
+- first item with `reviewKey >= session.reviewIndex`, wrapping to the first available item when needed
+
+Review item expansion:
+
+- Q/A notes generate one review item with `clozeNumber = 0`.
+- Cloze notes generate one review item for each distinct cloze number in the front field.
+- Multiple `{{c1::...}}` deletions in the same note still produce one `c1` review item.
+- A note containing `c1`, `c2`, and `c3` produces three review items, but it remains one stored card/note for editing, deletion, backup, and CSV export.
 
 Actions:
 
 - Tap card: flip front/back only.
-- Swipe left or Again button: set card `review_state = again`, advance review index to next original row.
-- Swipe right or Good button: set card `review_state = learned`, advance review index.
-- Delete: set card `status = deleted`, advance review index.
+- Swipe left or Again button: set the current review item `review_state = again`, advance review index to the next item.
+- Swipe right or Good button: set the current review item `review_state = learned`, advance review index.
+- Delete: set the underlying stored card/note `status = deleted`, advance review index.
 - Undo: restores the last graded/deleted card state and previous review index.
 - Neutral arrows: move `review_index` backward/forward within the current review queue without changing `review_state`, `status`, or undo history.
-- Restart: sets all kept cards back to `new` and review index to `0`.
+- Restart: sets all kept review items and card aggregates back to `new` and review index to `0`.
+- The flip card is intentionally full-width with a fixed viewport-relative height. Front/back content scrolls inside the card when needed so the card does not resize between prompt and answer.
+- Extra reveal fields use full-width panels with a stable minimum height; avoid reverting them to content-sized boxes, because that makes the answer side look uneven.
 
 Cards tab:
 
 - Shows full front/back content without review pressure.
 - Supports filters: All, Kept, Learning, Learned, Deleted.
-- Allows edit, delete, and restore.
+- Allows add, edit, delete, and restore.
+- Added cards append to the session with `review_state = new` and `status = kept`.
 
 ## Cloze Rendering
 
 Cloze syntax is handled by `ClozeTools`.
 
 - `questionText`: replaces each cloze with `[ hint ]` when a hint exists or `[ ... ]` otherwise.
+- `questionTextForNumber`: hides only the requested cloze number; other cloze numbers are shown as normal text.
 - `answerText`: plain-text answer replacement, mainly for tests and simple transformations.
 - `answerHtml`: replaces only the hidden cloze span with `<strong style="color:#12805C;font-weight:800">answer</strong>`.
+- `answerHtmlForNumber`: reveals all clozes but applies bold green emphasis only to the requested cloze number.
 
 Review/card text styles are intentionally regular weight. The cloze answer span is the only bold green emphasis, so the eye can jump to the answer quickly.
 
-If future work needs full Anki cloze support:
+Manual add/edit:
 
-- Add support for selecting a specific cloze number (`c1`, `c2`, etc.) as separate cards.
-- Preserve current v1 behavior for one-row-one-card imports unless there is an explicit migration.
+- `showAddCardDialog` and `showCardEditorDialog` share the same field editor.
+- In cloze sessions, the primary/front field is treated as the cloze field.
+- Selecting text in that field exposes a curated text-selection menu with only Cut, Copy, Paste, and Cloze when available. This avoids Android process-text actions such as share/search/third-party app shortcuts hiding the cloze action.
+- A small cloze icon button below the cloze field also wraps the selected text with the next cloze number, such as `{{c2::selected text}}`.
+- New cloze cards require at least one cloze deletion before saving. Edits are less strict so users can repair malformed imports without getting blocked.
+
+Keep this distinction intact: cloze expansion affects review only. Export must continue to emit one CSV row per stored note/card.
 
 ## HTML Rendering
 
@@ -164,7 +194,7 @@ Do not replace this with raw `Text` for card content unless the field is guarant
 File-open and share behavior has two halves:
 
 - Manifest intent filters in `AndroidManifest.xml` make the app appear for CSV/text files.
-- `MainActivity.kt` reads `ACTION_VIEW`/`ACTION_SEND`, converts content streams to UTF-8 text, and sends a payload through MethodChannel `llm_recall/imports`.
+- `MainActivity.kt` reads `ACTION_VIEW`/`ACTION_SEND`, decodes content streams with UTF-8/UTF-16 BOM and UTF-16 null-byte detection, and sends a text payload through MethodChannel `llm_recall/imports`.
 
 Dart receives the payload in `ImportBridge`, then `main.dart` opens `ImportScreen` with the incoming CSV text.
 
@@ -172,7 +202,8 @@ Stability notes:
 
 - Keep `android:exported="true"` for the main activity because it has launcher and external intent filters.
 - Keep `launchMode="singleTop"` so new imports can reach the existing activity through `onNewIntent`.
-- If binary/non-UTF-8 CSV support is needed later, add encoding detection in Kotlin/Dart before parsing.
+- Keep Android MIME/path filters aligned with parser support. Current open-with support includes CSV, TSV, text, and common Excel CSV MIME types.
+- If deeper legacy encoding support is needed later, extend both Dart `CsvTools.decodeBytes` and Kotlin `MainActivity.decodeText` together.
 
 ## Export And Backup
 
