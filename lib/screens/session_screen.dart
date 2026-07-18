@@ -106,17 +106,30 @@ class _SessionScreenState extends State<SessionScreen> {
                   if (session == null) {
                     return const Center(child: Text('Session not found.'));
                   }
-                  return TabBarView(
+                  return Column(
                     children: [
-                      _ReviewPane(
-                        appState: appState,
-                        session: session,
-                        item: appState.nextReviewItem,
-                      ),
-                      _CardListPane(
-                        appState: appState,
-                        session: session,
-                        cards: appState.currentCards,
+                      if (appState.errorMessage != null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: AppErrorBanner(
+                            message: appState.errorMessage!,
+                          ),
+                        ),
+                      Expanded(
+                        child: TabBarView(
+                          children: [
+                            _ReviewPane(
+                              appState: appState,
+                              session: session,
+                              item: appState.nextReviewItem,
+                            ),
+                            _CardListPane(
+                              appState: appState,
+                              session: session,
+                              cards: appState.currentCards,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   );
@@ -147,18 +160,16 @@ class _ReviewPane extends StatefulWidget {
 
 class _ReviewPaneState extends State<_ReviewPane> {
   bool _revealed = false;
-  int? _cardId;
+  (int?, int)? _itemKey;
   double _dragOffset = 0;
 
   @override
   void didUpdateWidget(covariant _ReviewPane oldWidget) {
     super.didUpdateWidget(oldWidget);
     final item = widget.item;
-    final nextId = item == null
-        ? null
-        : item.card.id.hashCode ^ item.clozeNumber.hashCode;
-    if (_cardId != nextId) {
-      _cardId = nextId;
+    final nextKey = item == null ? null : (item.card.id, item.clozeNumber);
+    if (_itemKey != nextKey) {
+      _itemKey = nextKey;
       _revealed = false;
       _dragOffset = 0;
     }

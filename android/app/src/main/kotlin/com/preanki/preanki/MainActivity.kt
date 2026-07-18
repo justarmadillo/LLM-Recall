@@ -7,7 +7,10 @@ import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 
 class MainActivity : FlutterActivity() {
     private val importChannelName = "llm_recall/imports"
@@ -127,7 +130,38 @@ class MainActivity : FlutterActivity() {
         if (sampleLength >= 8 && evenNulls > threshold && evenNulls > oddNulls * 3) {
             return String(bytes, Charset.forName("UTF-16BE"))
         }
-        return String(bytes, Charsets.UTF_8)
+        return decodeUtf8OrWindows1252(bytes)
+    }
+
+    // Mirrors the Dart-side CsvTools.decodeBytes fallback: strict UTF-8 first,
+    // then Windows-1252 when the bytes look like single-byte Western text.
+    private fun decodeUtf8OrWindows1252(bytes: ByteArray): String {
+        val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+        return try {
+            decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (_: CharacterCodingException) {
+            if (looksLikeSingleByteText(bytes)) {
+                String(bytes, Charset.forName("windows-1252"))
+            } else {
+                String(bytes, Charsets.UTF_8)
+            }
+        }
+    }
+
+    private fun looksLikeSingleByteText(bytes: ByteArray): Boolean {
+        var highBytes = 0
+        for (byte in bytes) {
+            val value = byte.toInt() and 0xFF
+            if (value == 0) {
+                return false
+            }
+            if (value >= 0x80) {
+                highBytes += 1
+            }
+        }
+        return highBytes > 0 && highBytes <= bytes.size * 0.35
     }
 
     private fun ByteArray.startsWith(vararg prefix: Int): Boolean {

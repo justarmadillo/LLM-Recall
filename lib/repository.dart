@@ -11,6 +11,10 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'cloze_tools.dart';
 import 'models.dart';
 
+/// Single source of truth for the SQLite schema version. Bump this and add a
+/// matching `onUpgrade` branch in `_openDatabase` for any DB shape change.
+const preAnkiSchemaVersion = 7;
+
 class PreAnkiRepository {
   // Keep public constructor labels instead of exposing private field names.
   PreAnkiRepository({
@@ -452,7 +456,7 @@ class PreAnkiRepository {
     return {
       'format': 'llm_recall_backup',
       'formatVersion': 1,
-      'databaseVersion': 7,
+      'databaseVersion': preAnkiSchemaVersion,
       'exportedAt': DateTime.now().toIso8601String(),
       'sessions': sessionsWithCards,
       'settings': settingsRows,
@@ -551,7 +555,7 @@ class PreAnkiRepository {
     return factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 7,
+        version: preAnkiSchemaVersion,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
         },

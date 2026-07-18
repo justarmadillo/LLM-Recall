@@ -19,7 +19,7 @@ class HtmlCardText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final html = _toRenderableHtml(value.trim().isEmpty ? emptyText : value);
+    final html = toRenderableCardHtml(value.trim().isEmpty ? emptyText : value);
     return HtmlWidget(
       html,
       textStyle: textStyle?.copyWith(letterSpacing: 0),
@@ -43,13 +43,37 @@ class HtmlCardText extends StatelessWidget {
   }
 }
 
-String _toRenderableHtml(String value) {
-  if (_containsHtml(value)) {
-    return value;
+@visibleForTesting
+String toRenderableCardHtml(String value) {
+  final html = _restoreEscapedHtmlTags(value);
+  if (_containsHtml(html)) {
+    return html;
   }
-  return const HtmlEscape().convert(value).replaceAll('\n', '<br>');
+  return const HtmlEscape().convert(html).replaceAll('\n', '<br>');
 }
 
 bool _containsHtml(String value) {
   return RegExp(r'<[a-zA-Z][^>]*>|</[a-zA-Z]+>|&#?\w+;').hasMatch(value);
 }
+
+String _restoreEscapedHtmlTags(String value) {
+  return value.replaceAllMapped(_escapedHtmlTagPattern, (match) {
+    return '<${_decodeEscapedTag(match.group(1)!)}>';
+  });
+}
+
+String _decodeEscapedTag(String tag) {
+  return tag
+      .replaceAll('&#47;', '/')
+      .replaceAll('&#x2F;', '/')
+      .replaceAll('&#x2f;', '/')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#34;', '"')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&#39;', "'")
+      .replaceAll('&amp;', '&');
+}
+
+final RegExp _escapedHtmlTagPattern = RegExp(
+  r'&lt;((?:/|&#47;|&#x2[fF];)?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^<>]*?)?\s*(?:/|&#47;|&#x2[fF];)?)&gt;',
+);

@@ -425,8 +425,10 @@ class PreAnkiAppState extends ChangeNotifier {
     notifyListeners();
     try {
       await action();
-    } catch (error) {
+    } catch (error, stackTrace) {
       errorMessage = error.toString();
+      // Keep failures visible in logs (adb logcat / console) for diagnosis.
+      debugPrint('PreAnkiAppState error: $error\n$stackTrace');
     } finally {
       isBusy = false;
       notifyListeners();

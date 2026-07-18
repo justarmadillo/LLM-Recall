@@ -32,7 +32,10 @@ class HomeScreen extends StatelessWidget {
                     ),
                   ),
                   if (appState.errorMessage != null)
-                    _ErrorBanner(message: appState.errorMessage!),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: AppErrorBanner(message: appState.errorMessage!),
+                    ),
                   if (appState.isBusy && appState.sessions.isEmpty)
                     const Padding(
                       padding: EdgeInsets.only(top: 80),
@@ -359,39 +362,3 @@ Future<void> _renameSession(
   await appState.renameSession(session.id!, title);
 }
 
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: Theme.of(context).colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Icon(
-                Icons.error_outline,
-                color: Theme.of(context).colorScheme.onErrorContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onErrorContainer,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

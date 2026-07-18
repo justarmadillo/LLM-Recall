@@ -20,7 +20,7 @@ class SettingsScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               children: [
                 if (appState.errorMessage != null) ...[
-                  _SettingsError(message: appState.errorMessage!),
+                  AppErrorBanner(message: appState.errorMessage!),
                   const SizedBox(height: 16),
                 ],
                 AppSurface(
@@ -157,38 +157,4 @@ Future<void> _importBackup(BuildContext context) async {
   ScaffoldMessenger.of(
     context,
   ).showSnackBar(const SnackBar(content: Text('Backup imported')));
-}
-
-class _SettingsError extends StatelessWidget {
-  const _SettingsError({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.errorContainer,
-      borderRadius: BorderRadius.circular(AppRadii.md),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Icon(
-              Icons.error_outline,
-              color: Theme.of(context).colorScheme.onErrorContainer,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                message,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

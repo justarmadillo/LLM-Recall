@@ -111,7 +111,7 @@ class _ImportScreenState extends State<ImportScreen> {
             ),
             if (_formError != null) ...[
               const SizedBox(height: 12),
-              _InlineError(message: _formError!),
+              AppErrorBanner(message: _formError!),
             ],
             if (result != null) ...[
               const SizedBox(height: 16),
@@ -328,7 +328,16 @@ class _ImportScreenState extends State<ImportScreen> {
       exportFields: fields,
       includeHeader: _includeHeader,
     );
-    if (!mounted || sessionId == null) {
+    if (!mounted) {
+      return;
+    }
+    if (sessionId == null) {
+      // createSessionFromImport reports failures via appState.errorMessage;
+      // surface it here so the user is not left staring at a silent screen.
+      setState(() {
+        _formError =
+            appState.errorMessage ?? 'Could not create the session.';
+      });
       return;
     }
     final navigator = Navigator.of(context);
@@ -662,40 +671,6 @@ class _PreviewTable extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _InlineError extends StatelessWidget {
-  const _InlineError({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.errorContainer,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Icon(
-              Icons.error_outline,
-              color: Theme.of(context).colorScheme.onErrorContainer,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                message,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

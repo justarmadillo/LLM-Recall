@@ -111,7 +111,9 @@ class CsvTools {
     for (final card in cards) {
       rows.add(exportFields.map((field) => card[field] ?? '').toList());
     }
-    return const CsvEncoder().convert(rows);
+    // Quote every field so rows can never be misread downstream — Anki treats
+    // unquoted lines starting with '#' as comments and would drop those cards.
+    return const CsvEncoder(quoteMode: QuoteMode.always).convert(rows);
   }
 
   List<Map<String, String>> rowsToCards({

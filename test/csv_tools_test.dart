@@ -103,10 +103,25 @@ void main() {
         includeHeader: true,
       );
 
-      expect(csv, contains('Front,Back'));
-      expect(csv, contains('Q1,A1'));
-      expect(csv, contains('Q2,"A,2"'));
+      expect(csv, contains('"Front","Back"'));
+      expect(csv, contains('"Q1","A1"'));
+      expect(csv, contains('"Q2","A,2"'));
       expect(csv, isNot(contains('geo')));
+    });
+
+    test('quotes every exported field so Anki cannot drop # rows', () {
+      final csv = CsvTools().exportRows(
+        headers: const ['Front', 'Back'],
+        cards: const [
+          {'Front': '# heading question', 'Back': 'answer'},
+        ],
+        exportFields: const ['Front', 'Back'],
+        includeHeader: false,
+      );
+
+      // Unquoted lines starting with '#' are treated as comments by Anki's
+      // CSV importer; always-quoted output keeps the row importable.
+      expect(csv.trim(), '"# heading question","answer"');
     });
   });
 }

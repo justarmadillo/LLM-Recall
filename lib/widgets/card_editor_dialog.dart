@@ -173,16 +173,12 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
     EditableTextState editableTextState,
     String field,
   ) {
-    final defaultItems = editableTextState.contextMenuButtonItems;
-    final buttonItems = <ContextMenuButtonItem>[
-      ..._defaultMenuItemsOfType(defaultItems, ContextMenuButtonType.cut),
-      ..._defaultMenuItemsOfType(defaultItems, ContextMenuButtonType.copy),
-      ..._defaultMenuItemsOfType(defaultItems, ContextMenuButtonType.paste),
-    ];
+    final buttonItems = editableTextState.contextMenuButtonItems.toList();
     if (_hasActiveSelection(field)) {
       buttonItems.add(
         ContextMenuButtonItem(
           label: 'Cloze',
+          type: ContextMenuButtonType.custom,
           onPressed: () {
             ContextMenuController.removeAny();
             _wrapSelectedTextAsCloze(field);
@@ -197,13 +193,6 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
       anchors: editableTextState.contextMenuAnchors,
       buttonItems: buttonItems,
     );
-  }
-
-  Iterable<ContextMenuButtonItem> _defaultMenuItemsOfType(
-    List<ContextMenuButtonItem> items,
-    ContextMenuButtonType type,
-  ) {
-    return items.where((item) => item.type == type && item.onPressed != null);
   }
 
   bool _hasActiveSelection(String field) {
