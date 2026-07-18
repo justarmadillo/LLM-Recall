@@ -113,14 +113,12 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
                       maxLines: isClozeField ? 8 : 5,
                       keyboardType: TextInputType.multiline,
                       textInputAction: TextInputAction.newline,
-                      contextMenuBuilder: isClozeField
-                          ? (context, editableTextState) =>
-                                _buildClozeContextMenu(
-                                  context,
-                                  editableTextState,
-                                  entry.key,
-                                )
-                          : null,
+                      contextMenuBuilder: (context, editableTextState) =>
+                          _buildEditorContextMenu(
+                            editableTextState,
+                            entry.key,
+                            includeClozeAction: isClozeField,
+                          ),
                       decoration: InputDecoration(
                         labelText: entry.key,
                         prefixIcon: Icon(
@@ -168,13 +166,13 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
 
   String? _errorText;
 
-  Widget _buildClozeContextMenu(
-    BuildContext context,
+  Widget _buildEditorContextMenu(
     EditableTextState editableTextState,
-    String field,
-  ) {
+    String field, {
+    required bool includeClozeAction,
+  }) {
     final buttonItems = editableTextState.contextMenuButtonItems.toList();
-    if (_hasActiveSelection(field)) {
+    if (includeClozeAction && _hasActiveSelection(field)) {
       buttonItems.add(
         ContextMenuButtonItem(
           label: 'Cloze',
