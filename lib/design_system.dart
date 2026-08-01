@@ -281,21 +281,25 @@ class AppSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.circular(radius);
-    final content = DecoratedBox(
+    final paddedChild = Padding(padding: padding, child: child);
+    return DecoratedBox(
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: borderRadius,
         border: Border.all(color: AppColors.hairline),
         boxShadow: shadow ? softShadow : null,
       ),
-      child: Padding(padding: padding, child: child),
-    );
-    if (onTap == null) {
-      return content;
-    }
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(borderRadius: borderRadius, onTap: onTap, child: content),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: borderRadius,
+        child: onTap == null
+            ? paddedChild
+            : InkWell(
+                borderRadius: borderRadius,
+                onTap: onTap,
+                child: paddedChild,
+              ),
+      ),
     );
   }
 }

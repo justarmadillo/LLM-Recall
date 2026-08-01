@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:preanki/models.dart';
 import 'package:preanki/widgets/card_editor_dialog.dart';
+import 'package:preanki/widgets/html_card_text.dart';
 
 void main() {
   testWidgets('card editor returns edited mapped fields', (tester) async {
@@ -36,6 +37,10 @@ void main() {
 
     await tester.tap(find.text('Edit'));
     await tester.pump();
+
+    await tester.tap(find.text('Preview HTML'));
+    await tester.pump();
+    expect(find.byType(HtmlCardText), findsNWidgets(2));
 
     await tester.enterText(
       find.widgetWithText(TextField, 'Back'),

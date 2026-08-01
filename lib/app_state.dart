@@ -32,6 +32,7 @@ class PreAnkiAppState extends ChangeNotifier {
   List<Flashcard> currentCards = const [];
   List<ReviewCard> currentReviewItems = const [];
   String? defaultExportFolder;
+  double reviewTextScale = defaultReviewTextScale;
   String? errorMessage;
   bool isBusy = false;
   ReviewUndo? _lastUndo;
@@ -71,6 +72,9 @@ class PreAnkiAppState extends ChangeNotifier {
       defaultExportFolder = await _repository.getSetting(
         _defaultExportFolderKey,
       );
+      reviewTextScale = _decodeReviewTextScale(
+        await _repository.getSetting(_reviewTextScaleKey),
+      );
     });
   }
 
@@ -90,6 +94,7 @@ class PreAnkiAppState extends ChangeNotifier {
     required List<List<String>> rows,
     required List<String> fieldNames,
     required String frontField,
+    List<String>? frontFields,
     required List<String> revealFields,
     required List<String> exportFields,
     required bool includeHeader,
@@ -103,6 +108,7 @@ class PreAnkiAppState extends ChangeNotifier {
         cardType: cardType,
         fieldNames: fieldNames,
         frontField: frontField,
+        frontFields: frontFields,
         revealFields: revealFields,
         exportFields: exportFields,
         includeHeader: includeHeader,
@@ -148,6 +154,28 @@ class PreAnkiAppState extends ChangeNotifier {
       } else {
         sessions = await _repository.listSessions();
       }
+    });
+  }
+
+  Future<void> updateSessionFieldLayout({
+    required int sessionId,
+    required List<String> fieldNames,
+    required String frontField,
+    required List<String> frontFields,
+  }) async {
+    await _run(() async {
+      await _repository.updateSessionFieldLayout(
+        sessionId: sessionId,
+        fieldNames: fieldNames,
+        frontField: frontField,
+        frontFields: frontFields,
+      );
+      if (currentSession?.id == sessionId) {
+        await _refreshCurrent(sessionId);
+      } else {
+        sessions = await _repository.listSessions();
+      }
+      _lastUndo = null;
     });
   }
 
@@ -266,6 +294,26 @@ class PreAnkiAppState extends ChangeNotifier {
     });
   }
 
+  Future<void> setReviewTextScale(double value) async {
+    final normalized = _normalizeReviewTextScale(value);
+    if ((normalized - reviewTextScale).abs() < 0.001) {
+      return;
+    }
+    await _run(() async {
+      await _repository.setSetting(
+        _reviewTextScaleKey,
+        normalized.toStringAsFixed(2),
+      );
+      reviewTextScale = normalized;
+    });
+  }
+
+  bool get canDecreaseReviewTextScale =>
+      reviewTextScale > minReviewTextScale + 0.001;
+
+  bool get canIncreaseReviewTextScale =>
+      reviewTextScale < maxReviewTextScale - 0.001;
+
   Future<String?> exportAppBackup() async {
     String? path;
     await _run(() async {
@@ -276,7 +324,7 @@ class PreAnkiAppState extends ChangeNotifier {
         RegExp(r'[:.]'),
         '-',
       );
-      final fileName = 'llm_recall_backup_$timestamp.json';
+      final fileName = 'memory_studio_backup_$timestamp.json';
       final exportFolder = defaultExportFolder;
       String? pickerInitialDirectory;
       if (exportFolder != null && exportFolder.trim().isNotEmpty) {
@@ -294,7 +342,7 @@ class PreAnkiAppState extends ChangeNotifier {
         }
       }
       final selectedPath = await FilePicker.saveFile(
-        dialogTitle: 'Export LLM Recall backup',
+        dialogTitle: 'Export Memory Studio backup',
         fileName: fileName,
         initialDirectory: pickerInitialDirectory,
         type: FileType.custom,
@@ -342,6 +390,9 @@ class PreAnkiAppState extends ChangeNotifier {
       sessions = await _repository.listSessions();
       defaultExportFolder = await _repository.getSetting(
         _defaultExportFolderKey,
+      );
+      reviewTextScale = _decodeReviewTextScale(
+        await _repository.getSetting(_reviewTextScaleKey),
       );
       currentSession = null;
       currentCards = const [];
@@ -437,6 +488,28 @@ class PreAnkiAppState extends ChangeNotifier {
 }
 
 const _defaultExportFolderKey = 'default_export_folder';
+const _reviewTextScaleKey = 'review_text_scale';
+
+const double minReviewTextScale = 0.7;
+const double maxReviewTextScale = 1.4;
+const double defaultReviewTextScale = 0.85;
+const double reviewTextScaleStep = 0.1;
+
+double _decodeReviewTextScale(String? value) {
+  final parsed = double.tryParse(value ?? '');
+  if (parsed == null || !parsed.isFinite) {
+    return defaultReviewTextScale;
+  }
+  return _normalizeReviewTextScale(parsed);
+}
+
+double _normalizeReviewTextScale(double value) {
+  if (!value.isFinite) {
+    return defaultReviewTextScale;
+  }
+  final clamped = value.clamp(minReviewTextScale, maxReviewTextScale);
+  return (clamped * 100).roundToDouble() / 100;
+}
 
 class ReviewUndo {
   const ReviewUndo({

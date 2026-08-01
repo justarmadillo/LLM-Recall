@@ -70,6 +70,7 @@ class PreAnkiSession {
     this.cardType = SessionCardType.questionAnswer,
     required this.fieldNames,
     required this.frontField,
+    List<String>? frontFields,
     required this.revealFields,
     required this.exportFields,
     required this.includeHeader,
@@ -81,7 +82,7 @@ class PreAnkiSession {
     this.deletedCount = 0,
     this.learnedCount = 0,
     this.againCount = 0,
-  });
+  }) : _frontFields = frontFields; // ignore: prefer_initializing_formals
 
   final int? id;
   final String title;
@@ -89,6 +90,19 @@ class PreAnkiSession {
   final SessionCardType cardType;
   final List<String> fieldNames;
   final String frontField;
+  final List<String>? _frontFields;
+
+  /// Fields shown on the front of a review card, in [fieldNames] order.
+  ///
+  /// Sessions created before multi-field fronts were introduced have no
+  /// persisted value. They safely retain their old behavior by using the
+  /// prompt/cloze [frontField] as their sole front field.
+  List<String> get frontFields => _effectiveFrontFields(
+    fieldNames: fieldNames,
+    frontField: frontField,
+    storedFrontFields: _frontFields,
+  );
+
   final List<String> revealFields;
   final List<String> exportFields;
   final bool includeHeader;
@@ -129,6 +143,7 @@ class PreAnkiSession {
     SessionCardType? cardType,
     List<String>? fieldNames,
     String? frontField,
+    List<String>? frontFields,
     List<String>? revealFields,
     List<String>? exportFields,
     bool? includeHeader,
@@ -148,6 +163,11 @@ class PreAnkiSession {
       cardType: cardType ?? this.cardType,
       fieldNames: fieldNames ?? this.fieldNames,
       frontField: frontField ?? this.frontField,
+      frontFields:
+          frontFields ??
+          (frontField != null && frontField != this.frontField
+              ? [frontField]
+              : _frontFields),
       revealFields: revealFields ?? this.revealFields,
       exportFields: exportFields ?? this.exportFields,
       includeHeader: includeHeader ?? this.includeHeader,
@@ -170,6 +190,7 @@ class PreAnkiSession {
       'card_type': cardType.storageValue,
       'field_names': jsonEncode(fieldNames),
       'front_field': frontField,
+      'front_fields': jsonEncode(frontFields),
       'reveal_fields': jsonEncode(revealFields),
       'export_fields': jsonEncode(exportFields),
       'include_header': includeHeader ? 1 : 0,
@@ -194,6 +215,7 @@ class PreAnkiSession {
       cardType: SessionCardType.fromStorage(row['card_type'] as String?),
       fieldNames: _decodeStringList(row['field_names'] as String?),
       frontField: row['front_field'] as String,
+      frontFields: _decodeStringList(row['front_fields'] as String?),
       revealFields: _decodeStringList(row['reveal_fields'] as String?),
       exportFields: _decodeStringList(row['export_fields'] as String?),
       includeHeader: (row['include_header'] as int? ?? 1) == 1,
@@ -207,6 +229,24 @@ class PreAnkiSession {
       againCount: againCount,
     );
   }
+}
+
+List<String> _effectiveFrontFields({
+  required List<String> fieldNames,
+  required String frontField,
+  required List<String>? storedFrontFields,
+}) {
+  final selectedFields = <String>{...?storedFrontFields, frontField};
+  final effectiveFields = [
+    for (final field in fieldNames)
+      if (selectedFields.contains(field)) field,
+  ];
+  // A malformed legacy row may have lost its field list. Keeping frontField
+  // here is safer than producing a card with an empty front.
+  if (!effectiveFields.contains(frontField)) {
+    effectiveFields.add(frontField);
+  }
+  return effectiveFields;
 }
 
 class ReviewCard {

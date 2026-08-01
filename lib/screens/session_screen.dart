@@ -8,6 +8,7 @@ import '../design_system.dart';
 import '../main.dart';
 import '../models.dart';
 import '../widgets/card_editor_dialog.dart';
+import '../widgets/field_layout_dialog.dart';
 import '../widgets/html_card_text.dart';
 
 class SessionScreen extends StatefulWidget {
@@ -19,8 +20,33 @@ class SessionScreen extends StatefulWidget {
   State<SessionScreen> createState() => _SessionScreenState();
 }
 
-class _SessionScreenState extends State<SessionScreen> {
+class _SessionScreenState extends State<SessionScreen>
+    with SingleTickerProviderStateMixin {
   bool _opened = false;
+  late final TabController _tabController;
+  int _activeTab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_handleTabChanged);
+  }
+
+  @override
+  void dispose() {
+    _tabController
+      ..removeListener(_handleTabChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleTabChanged() {
+    if (_tabController.indexIsChanging || _activeTab == _tabController.index) {
+      return;
+    }
+    setState(() => _activeTab = _tabController.index);
+  }
 
   @override
   void didChangeDependencies() {
@@ -40,108 +66,170 @@ class _SessionScreenState extends State<SessionScreen> {
       animation: appState,
       builder: (context, _) {
         final session = appState.currentSession;
-        return DefaultTabController(
-          length: 2,
-          child: Scaffold(
-            appBar: AppBar(
-              title: Text(session?.title ?? 'Session'),
-              actions: [
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(session?.title ?? 'Session'),
+            actions: [
+              if (_activeTab == 0) ...[
                 IconButton(
-                  tooltip: 'Rename session',
-                  icon: const Icon(Icons.edit_outlined),
-                  onPressed: session == null
-                      ? null
-                      : () => _renameSession(context, appState, session),
+                  tooltip:
+                      'Smaller review text (${(appState.reviewTextScale * 100).round()}%)',
+                  icon: const Icon(Icons.text_decrease_outlined),
+                  onPressed: appState.canDecreaseReviewTextScale
+                      ? () => appState.setReviewTextScale(
+                          appState.reviewTextScale - reviewTextScaleStep,
+                        )
+                      : null,
                 ),
                 IconButton(
-                  tooltip: 'Export CSV',
-                  icon: const Icon(Icons.download_outlined),
-                  onPressed: session == null
-                      ? null
-                      : () async {
-                          final path = await appState.exportSession(
-                            session.id!,
-                          );
-                          if (!context.mounted || path == null) {
-                            return;
-                          }
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Exported to $path')),
-                          );
-                        },
+                  tooltip:
+                      'Larger review text (${(appState.reviewTextScale * 100).round()}%)',
+                  icon: const Icon(Icons.text_increase_outlined),
+                  onPressed: appState.canIncreaseReviewTextScale
+                      ? () => appState.setReviewTextScale(
+                          appState.reviewTextScale + reviewTextScaleStep,
+                        )
+                      : null,
                 ),
-                PopupMenuButton<String>(
-                  tooltip: 'Deck actions',
-                  onSelected: session == null
-                      ? null
-                      : (value) async {
-                          if (value == 'restart') {
-                            await appState.restartSession(session.id!);
-                          }
-                        },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(
-                      value: 'restart',
-                      child: ListTile(
-                        leading: Icon(Icons.replay_outlined),
-                        title: Text('Restart'),
+              ],
+              PopupMenuButton<_DeckAction>(
+                tooltip: 'Deck actions',
+                onSelected: session == null
+                    ? null
+                    : (value) =>
+                          _handleDeckAction(context, appState, session, value),
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: _DeckAction.arrangeFields,
+                    child: ListTile(
+                      leading: Icon(Icons.swap_vert_outlined),
+                      title: Text('Arrange fields'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _DeckAction.rename,
+                    child: ListTile(
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Rename'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _DeckAction.export,
+                    child: ListTile(
+                      leading: Icon(Icons.download_outlined),
+                      title: Text('Export CSV'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _DeckAction.restart,
+                    child: ListTile(
+                      leading: Icon(Icons.replay_outlined),
+                      title: Text('Restart'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: _DeckAction.resetTextSize,
+                    child: ListTile(
+                      leading: Icon(Icons.format_size_outlined),
+                      title: Text('Reset review text'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            bottom: TabBar(
+              controller: _tabController,
+              tabs: const [
+                Tab(text: 'Review'),
+                Tab(text: 'Cards'),
+              ],
+            ),
+          ),
+          body: SafeArea(
+            child: Builder(
+              builder: (context) {
+                if (appState.isBusy && session == null) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (session == null) {
+                  return const Center(child: Text('Session not found.'));
+                }
+                return Column(
+                  children: [
+                    if (appState.errorMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: AppErrorBanner(message: appState.errorMessage!),
+                      ),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabController,
+                        children: [
+                          _ReviewPane(
+                            appState: appState,
+                            session: session,
+                            item: appState.nextReviewItem,
+                          ),
+                          _CardListPane(
+                            appState: appState,
+                            session: session,
+                            cards: appState.currentCards,
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                ),
-              ],
-              bottom: const TabBar(
-                tabs: [
-                  Tab(icon: Icon(Icons.style_outlined), text: 'Review'),
-                  Tab(icon: Icon(Icons.table_rows_outlined), text: 'Cards'),
-                ],
-              ),
-            ),
-            body: SafeArea(
-              child: Builder(
-                builder: (context) {
-                  if (appState.isBusy && session == null) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (session == null) {
-                    return const Center(child: Text('Session not found.'));
-                  }
-                  return Column(
-                    children: [
-                      if (appState.errorMessage != null)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                          child: AppErrorBanner(
-                            message: appState.errorMessage!,
-                          ),
-                        ),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            _ReviewPane(
-                              appState: appState,
-                              session: session,
-                              item: appState.nextReviewItem,
-                            ),
-                            _CardListPane(
-                              appState: appState,
-                              session: session,
-                              cards: appState.currentCards,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
+                );
+              },
             ),
           ),
         );
       },
     );
   }
+
+  Future<void> _handleDeckAction(
+    BuildContext context,
+    PreAnkiAppState appState,
+    PreAnkiSession session,
+    _DeckAction action,
+  ) async {
+    switch (action) {
+      case _DeckAction.arrangeFields:
+        final result = await showFieldLayoutDialog(context, session: session);
+        if (result == null || !context.mounted) {
+          return;
+        }
+        await appState.updateSessionFieldLayout(
+          sessionId: session.id!,
+          fieldNames: result.orderedFields,
+          frontField: result.frontField,
+          frontFields: result.frontFields,
+        );
+        if (context.mounted && appState.errorMessage == null) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Field order updated')));
+        }
+      case _DeckAction.rename:
+        await _renameSession(context, appState, session);
+      case _DeckAction.export:
+        final path = await appState.exportSession(session.id!);
+        if (!context.mounted || path == null) {
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Exported to $path')));
+      case _DeckAction.restart:
+        await appState.restartSession(session.id!);
+      case _DeckAction.resetTextSize:
+        await appState.setReviewTextScale(defaultReviewTextScale);
+    }
+  }
 }
+
+enum _DeckAction { arrangeFields, rename, export, restart, resetTextSize }
 
 class _ReviewPane extends StatefulWidget {
   const _ReviewPane({
@@ -183,174 +271,230 @@ class _ReviewPaneState extends State<_ReviewPane> {
     }
 
     final card = item.card;
-    final front = card.fields[widget.session.frontField] ?? '';
     final isCloze = item.isCloze;
-    final displayFront = isCloze
-        ? ClozeTools.questionTextForNumber(front, item.clozeNumber)
-        : front;
-    final clozeAnswer = isCloze
-        ? ClozeTools.answerHtmlForNumber(front, item.clozeNumber)
-        : null;
-    final revealFields = widget.session.revealFields
-        .where((field) => field != widget.session.frontField)
-        .toList();
-
-    return GestureDetector(
-      onHorizontalDragUpdate: (details) {
-        setState(() {
-          _dragOffset = (_dragOffset + details.delta.dx).clamp(-140, 140);
-        });
-      },
-      onHorizontalDragEnd: (details) {
-        final velocity = details.primaryVelocity ?? 0;
-        final offset = _dragOffset;
-        setState(() => _dragOffset = 0);
-        if (velocity < -350 || offset < -84) {
-          _markAgain(item);
-        }
-        if (velocity > 350 || offset > 84) {
-          _markLearned(item);
-        }
-      },
-      onHorizontalDragCancel: () => setState(() => _dragOffset = 0),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
-        children: [
-          _ReviewProgress(session: widget.session),
-          const SizedBox(height: 18),
-          _SwipeReviewCard(
-            dragOffset: _dragOffset,
-            child: _FlipReviewCard(
-              showingBack: _revealed,
-              onTap: () => setState(() => _revealed = !_revealed),
-              front: _ReviewCardFace(
-                badges: [
-                  AppBadge(
-                    label: item.reviewState.label,
-                    icon: item.reviewState == ReviewState.again
-                        ? Icons.refresh_outlined
-                        : Icons.local_fire_department_outlined,
-                  ),
-                  if (isCloze)
-                    AppBadge(
-                      label: 'Cloze c${item.clozeNumber}',
-                      icon: Icons.data_object_outlined,
-                      color: AppColors.accentTeal,
-                    ),
-                ],
-                field: widget.session.frontField,
-                child: HtmlCardText(
-                  value: displayFront,
-                  textStyle: _reviewPromptTextStyle(context),
-                ),
-              ),
-              back: _ReviewCardFace(
-                badges: [
-                  const AppBadge(
-                    label: 'Answer',
-                    icon: Icons.visibility_outlined,
-                  ),
-                  if (isCloze)
-                    AppBadge(
-                      label: 'Cloze c${item.clozeNumber}',
-                      icon: Icons.data_object_outlined,
-                      color: AppColors.accentTeal,
-                    ),
-                ],
-                field: isCloze ? 'Cloze answer' : 'Answer',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (clozeAnswer != null) ...[
-                      HtmlCardText(
-                        value: clozeAnswer,
-                        textStyle: _reviewAnswerTextStyle(context),
-                      ),
-                      if (revealFields.isNotEmpty) const Divider(height: 30),
-                    ],
-                    if (clozeAnswer == null && revealFields.isEmpty)
-                      HtmlCardText(
-                        value: front,
-                        textStyle: _reviewAnswerTextStyle(context),
-                      ),
-                    for (final field in revealFields) ...[
-                      _RevealBlock(
-                        field: field,
-                        value: _revealedFieldHtml(card.fields[field] ?? ''),
-                      ),
-                      const SizedBox(height: 14),
-                    ],
-                  ],
-                ),
-              ),
+    final configuredFrontFields = {
+      ...widget.session.frontFields,
+      widget.session.frontField,
+    };
+    final frontEntries = [
+      for (final field in widget.session.fieldNames)
+        if (configuredFrontFields.contains(field))
+          MapEntry(
+            field,
+            _frontFieldHtml(
+              field: field,
+              value: card.fields[field] ?? '',
+              item: item,
             ),
           ),
-          const SizedBox(height: 16),
-          _ReviewNavigationBar(
-            position: widget.appState.reviewQueuePosition,
-            count: widget.appState.reviewQueueCount,
-            canMoveBack: widget.appState.canMoveReviewBack,
-            canMoveForward: widget.appState.canMoveReviewForward,
-            onBack: () => _moveReview(-1),
-            onForward: () => _moveReview(1),
+    ];
+    final backEntries = [
+      for (final field in widget.session.fieldNames)
+        MapEntry(
+          field,
+          _backFieldHtml(
+            field: field,
+            value: card.fields[field] ?? '',
+            item: item,
           ),
-          const SizedBox(height: 12),
-          Row(
+        ),
+    ];
+
+    final textScale = widget.appState.reviewTextScale;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+          child: Column(
             children: [
+              _ReviewProgress(
+                session: widget.session,
+                position: widget.appState.reviewQueuePosition,
+                count: widget.appState.reviewQueueCount,
+                canMoveBack: widget.appState.canMoveReviewBack,
+                canMoveForward: widget.appState.canMoveReviewForward,
+                onBack: () => _moveReview(-1),
+                onForward: () => _moveReview(1),
+              ),
+              const SizedBox(height: 10),
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _markAgain(item),
-                  icon: const Icon(Icons.arrow_back_outlined),
-                  label: const Text('Again'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.again,
-                    backgroundColor: AppColors.againSoft,
-                    side: const BorderSide(color: Color(0xFFFFC7C0)),
+                child: GestureDetector(
+                  onHorizontalDragUpdate: (details) {
+                    setState(() {
+                      _dragOffset = (_dragOffset + details.delta.dx).clamp(
+                        -140,
+                        140,
+                      );
+                    });
+                  },
+                  onHorizontalDragEnd: (details) {
+                    final velocity = details.primaryVelocity ?? 0;
+                    final offset = _dragOffset;
+                    setState(() => _dragOffset = 0);
+                    if (velocity < -350 || offset < -84) {
+                      _markAgain(item);
+                    }
+                    if (velocity > 350 || offset > 84) {
+                      _markLearned(item);
+                    }
+                  },
+                  onHorizontalDragCancel: () => setState(() => _dragOffset = 0),
+                  child: _SwipeReviewCard(
+                    dragOffset: _dragOffset,
+                    child: _FlipReviewCard(
+                      showingBack: _revealed,
+                      onTap: () => setState(() => _revealed = !_revealed),
+                      front: _ReviewCardFace(
+                        badges: [
+                          if (isCloze)
+                            AppBadge(
+                              label: 'Cloze c${item.clozeNumber}',
+                              icon: Icons.data_object_outlined,
+                              color: AppColors.accentTeal,
+                            ),
+                        ],
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (
+                              var index = 0;
+                              index < frontEntries.length;
+                              index += 1
+                            ) ...[
+                              _ReviewFieldBlock(
+                                field: frontEntries[index].key,
+                                value: frontEntries[index].value,
+                                textScale: textScale,
+                                textStyle: _reviewPromptTextStyle(context),
+                              ),
+                              if (index < frontEntries.length - 1)
+                                const SizedBox(height: 20),
+                            ],
+                          ],
+                        ),
+                      ),
+                      back: _ReviewCardFace(
+                        badges: [
+                          if (isCloze)
+                            AppBadge(
+                              label: 'Cloze c${item.clozeNumber}',
+                              icon: Icons.data_object_outlined,
+                              color: AppColors.accentTeal,
+                            ),
+                        ],
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (
+                              var index = 0;
+                              index < backEntries.length;
+                              index += 1
+                            ) ...[
+                              _ReviewFieldBlock(
+                                field: backEntries[index].key,
+                                value: backEntries[index].value,
+                                textScale: textScale,
+                                textStyle: _reviewAnswerTextStyle(context),
+                              ),
+                              if (index < backEntries.length - 1)
+                                const SizedBox(height: 20),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => _markLearned(item),
-                  icon: const Icon(Icons.arrow_forward_outlined),
-                  label: const Text('Good'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.good,
-                    foregroundColor: Colors.white,
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => setState(() => _revealed = !_revealed),
+                    icon: Icon(
+                      _revealed
+                          ? Icons.visibility_off_outlined
+                          : Icons.visibility_outlined,
+                    ),
+                    label: Text(_revealed ? 'Show question' : 'Show answer'),
                   ),
-                ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Undo last review',
+                    onPressed: widget.appState.canUndoReview ? _undo : null,
+                    icon: const Icon(Icons.undo_outlined),
+                  ),
+                  PopupMenuButton<_ReviewCardAction>(
+                    tooltip: 'Card actions',
+                    icon: const Icon(Icons.more_horiz),
+                    onSelected: (action) {
+                      switch (action) {
+                        case _ReviewCardAction.edit:
+                          _editCard(context, card);
+                        case _ReviewCardAction.delete:
+                          _delete(item);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: _ReviewCardAction.edit,
+                        child: ListTile(
+                          leading: Icon(Icons.edit_outlined),
+                          title: Text('Edit card'),
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: _ReviewCardAction.delete,
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.delete_outline,
+                            color: AppColors.danger,
+                          ),
+                          title: Text(
+                            'Delete card',
+                            style: TextStyle(color: AppColors.danger),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _markAgain(item),
+                      icon: const Icon(Icons.refresh_outlined),
+                      label: const Text('Again'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.again,
+                        backgroundColor: AppColors.againSoft,
+                        side: const BorderSide(color: Color(0xFFFFC7C0)),
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => _markLearned(item),
+                      icon: const Icon(Icons.check_outlined),
+                      label: const Text('Good'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.good,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _editCard(context, card),
-                  icon: const Icon(Icons.edit_outlined),
-                  label: const Text('Edit'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: widget.appState.canUndoReview ? _undo : null,
-                  icon: const Icon(Icons.undo_outlined),
-                  label: const Text('Undo'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: () => _delete(item),
-            icon: const Icon(Icons.delete_outline),
-            label: const Text('Delete card'),
-            style: OutlinedButton.styleFrom(foregroundColor: AppColors.danger),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -362,19 +506,44 @@ class _ReviewPaneState extends State<_ReviewPane> {
     return ClozeTools.answerHtml(value);
   }
 
+  String _frontFieldHtml({
+    required String field,
+    required String value,
+    required ReviewCard item,
+  }) {
+    if (field == widget.session.frontField && item.isCloze) {
+      return ClozeTools.questionTextForNumber(value, item.clozeNumber);
+    }
+    if (ClozeTools.hasCloze(value)) {
+      return ClozeTools.questionText(value);
+    }
+    return value;
+  }
+
+  String _backFieldHtml({
+    required String field,
+    required String value,
+    required ReviewCard item,
+  }) {
+    if (field == widget.session.frontField && item.isCloze) {
+      return ClozeTools.answerHtmlForNumber(value, item.clozeNumber);
+    }
+    return _revealedFieldHtml(value);
+  }
+
   TextStyle? _reviewPromptTextStyle(BuildContext context) {
-    return Theme.of(context).textTheme.headlineSmall?.copyWith(
+    return Theme.of(context).textTheme.titleLarge?.copyWith(
       color: AppColors.ink,
       fontWeight: FontWeight.w500,
-      height: 1.24,
+      height: 1.32,
     );
   }
 
   TextStyle? _reviewAnswerTextStyle(BuildContext context) {
-    return Theme.of(context).textTheme.headlineSmall?.copyWith(
+    return Theme.of(context).textTheme.titleLarge?.copyWith(
       color: AppColors.ink,
       fontWeight: FontWeight.w400,
-      height: 1.34,
+      height: 1.38,
     );
   }
 
@@ -427,6 +596,8 @@ class _ReviewPaneState extends State<_ReviewPane> {
     await widget.appState.updateCard(card, fields);
   }
 }
+
+enum _ReviewCardAction { edit, delete }
 
 class _FlipReviewCard extends StatelessWidget {
   const _FlipReviewCard({
@@ -483,9 +654,9 @@ class _SwipeReviewCard extends StatelessWidget {
     final color = isGood ? AppColors.good : AppColors.again;
     final label = isGood ? 'GOOD' : 'AGAIN';
     final icon = isGood ? Icons.check_circle_outline : Icons.refresh_outlined;
-    return SizedBox(
-      width: double.infinity,
+    return SizedBox.expand(
       child: Stack(
+        fit: StackFit.expand,
         alignment: Alignment.center,
         children: [
           Positioned.fill(
@@ -548,7 +719,7 @@ class _SwipeReviewCard extends StatelessWidget {
             curve: Curves.easeOutCubic,
             transform: Matrix4.translationValues(dragOffset, 0, 0)
               ..rotateZ(dragOffset / 1400),
-            child: SizedBox(width: double.infinity, child: child),
+            child: SizedBox.expand(child: child),
           ),
         ],
       ),
@@ -557,35 +728,24 @@ class _SwipeReviewCard extends StatelessWidget {
 }
 
 class _ReviewCardFace extends StatelessWidget {
-  const _ReviewCardFace({
-    required this.badges,
-    required this.field,
-    required this.child,
-  });
+  const _ReviewCardFace({required this.badges, required this.child});
 
   final List<Widget> badges;
-  final String field;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final height = (MediaQuery.sizeOf(context).height * 0.42).clamp(
-      340.0,
-      460.0,
-    );
-    return SizedBox(
-      width: double.infinity,
-      height: height,
+    return SizedBox.expand(
       child: AppSurface(
         shadow: true,
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Wrap(spacing: 8, runSpacing: 8, children: badges),
-            const SizedBox(height: 18),
-            Text(field, style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 10),
+            if (badges.isNotEmpty) ...[
+              Wrap(spacing: 8, runSpacing: 8, children: badges),
+              const SizedBox(height: 12),
+            ],
             Expanded(
               child: SingleChildScrollView(
                 child: SizedBox(width: double.infinity, child: child),
@@ -659,70 +819,8 @@ class _DonePane extends StatelessWidget {
 }
 
 class _ReviewProgress extends StatelessWidget {
-  const _ReviewProgress({required this.session});
-
-  final PreAnkiSession session;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppSurface(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Learning queue',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              Text(
-                '${session.learnedCount}/${session.reviewCount}',
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadii.full),
-            child: LinearProgressIndicator(
-              minHeight: 9,
-              value: session.progress,
-              backgroundColor: AppColors.hairline,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              AppBadge(
-                label: '${session.learningCount} learning',
-                icon: Icons.school_outlined,
-                color: AppColors.accentOrange,
-              ),
-              AppBadge(
-                label: '${session.againCount} again',
-                icon: Icons.refresh_outlined,
-                color: AppColors.accentPink,
-              ),
-              AppBadge(
-                label: '${session.deletedCount} deleted',
-                icon: Icons.delete_outline,
-                color: AppColors.danger,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ReviewNavigationBar extends StatelessWidget {
-  const _ReviewNavigationBar({
+  const _ReviewProgress({
+    required this.session,
     required this.position,
     required this.count,
     required this.canMoveBack,
@@ -731,6 +829,7 @@ class _ReviewNavigationBar extends StatelessWidget {
     required this.onForward,
   });
 
+  final PreAnkiSession session;
   final int position;
   final int count;
   final bool canMoveBack;
@@ -740,72 +839,94 @@ class _ReviewNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AppSurface(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Previous card',
-            onPressed: canMoveBack ? onBack : null,
-            icon: const Icon(Icons.chevron_left),
+    return Row(
+      children: [
+        IconButton(
+          tooltip: 'Previous card',
+          visualDensity: VisualDensity.compact,
+          onPressed: canMoveBack ? onBack : null,
+          icon: const Icon(Icons.chevron_left),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '$position of $count',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: AppColors.inkSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${session.learningCount} left',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: AppColors.inkMuted,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadii.full),
+                child: LinearProgressIndicator(
+                  minHeight: 5,
+                  value: session.progress,
+                  backgroundColor: AppColors.hairline,
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: Text(
-              '$position / $count',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.labelLarge?.copyWith(color: AppColors.inkSecondary),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Next card',
-            onPressed: canMoveForward ? onForward : null,
-            icon: const Icon(Icons.chevron_right),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'Next card',
+          visualDensity: VisualDensity.compact,
+          onPressed: canMoveForward ? onForward : null,
+          icon: const Icon(Icons.chevron_right),
+        ),
+      ],
     );
   }
 }
 
-class _RevealBlock extends StatelessWidget {
-  const _RevealBlock({required this.field, required this.value});
+class _ReviewFieldBlock extends StatelessWidget {
+  const _ReviewFieldBlock({
+    required this.field,
+    required this.value,
+    required this.textScale,
+    required this.textStyle,
+  });
 
   final String field;
   final String value;
+  final double textScale;
+  final TextStyle? textStyle;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: AppColors.canvasSoft,
-          borderRadius: BorderRadius.circular(AppRadii.md),
-          border: Border.all(color: AppColors.hairline),
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 96),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(field, style: Theme.of(context).textTheme.labelLarge),
-                const SizedBox(height: 6),
-                HtmlCardText(
-                  value: value,
-                  textStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w400,
-                    height: 1.45,
-                  ),
-                ),
-              ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            field,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: AppColors.inkMuted,
+              fontWeight: FontWeight.w700,
             ),
           ),
-        ),
+          const SizedBox(height: 6),
+          HtmlCardText(
+            value: value,
+            textScale: textScale,
+            textStyle: textStyle,
+          ),
+        ],
       ),
     );
   }
@@ -886,6 +1007,14 @@ class _CardListPaneState extends State<_CardListPane> {
                 ),
               ),
               const SizedBox(width: 10),
+              IconButton(
+                tooltip: 'Arrange fields',
+                onPressed: widget.session.id == null
+                    ? null
+                    : () => _arrangeFields(context),
+                icon: const Icon(Icons.swap_vert_outlined),
+              ),
+              const SizedBox(width: 4),
               IconButton.filled(
                 tooltip: 'Add card',
                 onPressed: widget.session.id == null
@@ -938,6 +1067,26 @@ class _CardListPaneState extends State<_CardListPane> {
       context,
     ).showSnackBar(const SnackBar(content: Text('Card added')));
   }
+
+  Future<void> _arrangeFields(BuildContext context) async {
+    final sessionId = widget.session.id;
+    if (sessionId == null) {
+      return;
+    }
+    final result = await showFieldLayoutDialog(
+      context,
+      session: widget.session,
+    );
+    if (result == null || !context.mounted) {
+      return;
+    }
+    await widget.appState.updateSessionFieldLayout(
+      sessionId: sessionId,
+      fieldNames: result.orderedFields,
+      frontField: result.frontField,
+      frontFields: result.frontFields,
+    );
+  }
 }
 
 class _QuickReviewCard extends StatelessWidget {
@@ -953,16 +1102,17 @@ class _QuickReviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rawFront = card.fields[session.frontField] ?? '';
-    final frontHasCloze = ClozeTools.hasCloze(rawFront);
-    final front = frontHasCloze ? ClozeTools.questionText(rawFront) : rawFront;
-    final answerEntries = [
-      if (frontHasCloze)
-        MapEntry('Cloze answer', ClozeTools.answerHtml(rawFront)),
-      for (final field in session.revealFields)
-        if (field != session.frontField)
-          MapEntry(field, _fieldBackHtml(card.fields[field] ?? '')),
+    final configuredFrontFields = {...session.frontFields, session.frontField};
+    final frontEntries = [
+      for (final field in session.fieldNames)
+        if (configuredFrontFields.contains(field))
+          MapEntry(field, _fieldFrontHtml(card.fields[field] ?? '')),
     ];
+    final backEntries = [
+      for (final field in session.fieldNames)
+        MapEntry(field, _fieldBackHtml(card.fields[field] ?? '')),
+    ];
+    final textScale = appState.reviewTextScale;
 
     return Opacity(
       opacity: card.isDeleted ? 0.62 : 1,
@@ -1002,43 +1152,38 @@ class _QuickReviewCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            Text(
-              session.frontField,
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            const SizedBox(height: 6),
-            HtmlCardText(
-              value: front,
+            _QuickReviewSide(
+              label: 'Front',
+              entries: frontEntries,
+              textScale: textScale,
               textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
                 color: AppColors.ink,
                 fontWeight: FontWeight.w500,
                 height: 1.4,
               ),
             ),
-            if (answerEntries.isNotEmpty) ...[
-              const Divider(height: 28),
-              for (var index = 0; index < answerEntries.length; index += 1) ...[
-                Text(
-                  answerEntries[index].key,
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-                const SizedBox(height: 6),
-                HtmlCardText(
-                  value: answerEntries[index].value,
-                  textStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: AppColors.ink,
-                    fontWeight: FontWeight.w400,
-                    height: 1.42,
-                  ),
-                ),
-                if (index < answerEntries.length - 1)
-                  const SizedBox(height: 16),
-              ],
-            ],
+            const Divider(height: 28),
+            _QuickReviewSide(
+              label: 'Back',
+              entries: backEntries,
+              textScale: textScale,
+              textStyle: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: AppColors.ink,
+                fontWeight: FontWeight.w400,
+                height: 1.42,
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  String _fieldFrontHtml(String value) {
+    if (ClozeTools.hasCloze(value)) {
+      return ClozeTools.questionText(value);
+    }
+    return value;
   }
 
   String _fieldBackHtml(String value) {
@@ -1089,6 +1234,47 @@ class _QuickReviewCard extends StatelessWidget {
       return;
     }
     await appState.updateCard(card, fields);
+  }
+}
+
+class _QuickReviewSide extends StatelessWidget {
+  const _QuickReviewSide({
+    required this.label,
+    required this.entries,
+    required this.textScale,
+    required this.textStyle,
+  });
+
+  final String label;
+  final List<MapEntry<String, String>> entries;
+  final double textScale;
+  final TextStyle? textStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: AppColors.inkMuted,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 10),
+        for (var index = 0; index < entries.length; index += 1) ...[
+          _ReviewFieldBlock(
+            field: entries[index].key,
+            value: entries[index].value,
+            textScale: textScale,
+            textStyle: textStyle,
+          ),
+          if (index < entries.length - 1) const SizedBox(height: 16),
+        ],
+      ],
+    );
   }
 }
 

@@ -47,7 +47,7 @@ class _PreAnkiAppState extends State<PreAnkiApp> {
       appState: widget.appState,
       child: MaterialApp(
         navigatorKey: _navigatorKey,
-        title: 'LLM Recall',
+        title: 'Memory Studio',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
         themeMode: ThemeMode.light,

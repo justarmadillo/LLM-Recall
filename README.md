@@ -1,6 +1,6 @@
-# LLM Recall
+# Memory Studio
 
-LLM Recall is a Flutter app for reviewing LLM-generated CSV flashcards locally, with optional CSV export for Anki.
+Memory Studio is a Flutter app for reviewing LLM-generated CSV flashcards locally, with optional CSV export for Anki.
 
 ## Features
 
@@ -8,11 +8,11 @@ LLM Recall is a Flutter app for reviewing LLM-generated CSV flashcards locally, 
 - Auto-detect comma, semicolon, or tab delimiters.
 - Auto-detect and confirm header rows.
 - Choose Question/Answer or Cloze import mode per CSV.
-- Mark one question or cloze field; all other fields become back-side extra content.
+- Drag fields into their exact display order, independently choose the question/cloze prompt, and mark each field as Front & back or Back only.
 - Store multiple local review sessions in SQLite.
-- Review cards with tap-to-flip, swipe left for Again, swipe right for Good, edit/delete, and undo.
+- Review in a focused card view with compact progress, adjustable text size, tap-to-flip, swipe grading, edit/delete, and undo.
 - Render Anki cloze deletions such as `{{c1::answer}}` as hidden prompts, then reveal the answer in bold green text.
-- Render HTML card fields.
+- Render HTML in every card field, with an optional rendered preview while adding or editing.
 - Rename and restart sessions.
 - Open CSV files from Android file managers or share sheets directly into import preview.
 - Save exports to a default CSV folder when configured.
@@ -51,6 +51,12 @@ flutter build apk --release
 
 `flutter doctor` should show the Android toolchain as healthy. If Gradle needs to download its wrapper distribution on a slow connection, the project uses the smaller `gradle-9.1.0-bin.zip` distribution.
 
-## Windows Later
+## Windows
 
-The Windows runner is scaffolded, but desktop builds require Visual Studio with the "Desktop development with C++" workload, CMake tools, MSVC build tools, and the Windows SDK.
+Build the portable Windows release with:
+
+```powershell
+flutter build windows --release
+```
+
+Desktop builds require Visual Studio with the "Desktop development with C++" workload, CMake tools, MSVC build tools, and the Windows SDK.

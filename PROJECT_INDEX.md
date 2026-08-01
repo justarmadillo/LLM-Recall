@@ -27,10 +27,10 @@ file_picker/clipboard -> ImportScreen -> CsvTools.parse/decodeBytes -> field map
                  v                                       v
           HtmlCardText display                     ExportService/CsvTools.exportRows
 ## File Map
-pubspec.yaml — app identity `preanki`/visible LLM Recall; direct deps show local SQLite/CSV/HTML/file workflows — imports none.
+pubspec.yaml — app identity `preanki`/visible Memory Studio; direct deps show local SQLite/CSV/HTML/file workflows — imports none.
 lib/main.dart — initializes repository before `runApp`; global `AppScope`; listens for Android import bridge — imports `app_state`, `repository`, `import_bridge`, screens.
 lib/app_state.dart — UI-facing state machine; busy/error wrapper; review queue/undo/export/backup orchestration — imports `csv_tools`, `export_service`, `repository`, `models`.
-lib/repository.dart — SQLite schema v7, migrations, review-item expansion, backup import/export, settings — imports `sqflite`, `sqflite_common_ffi`, `path_provider`, `cloze_tools`, `models`.
+lib/repository.dart — SQLite schema v8, migrations, review-item expansion, backup import/export, settings — imports `sqflite`, `sqflite_common_ffi`, `path_provider`, `cloze_tools`, `models`.
 lib/models.dart — persisted session/card/review model; JSON DB mapping; expanded review key math — imports `dart:convert`.
 lib/csv_tools.dart — CSV decoding/parsing/export; delimiter scoring; relaxed malformed-quote fallback; header inference — imports `csv`.
 lib/cloze_tools.dart — Anki cloze regex/rendering/wrap/number helpers; answer HTML escaping — imports `dart:convert`.
@@ -166,8 +166,8 @@ Error handling — export direct-write catches `FileSystemException` and falls b
 Auth — none; no accounts/sync/cloud; all user data stays in local SQLite/files.
 Data access — screens call `AppScope.of(context)` -> `PreAnkiAppState`; only `PreAnkiRepository` uses SQL.
 Data access — multi-table writes use `_db.transaction`, e.g. `createSession`, `addCard`, `updateCardFields`, `importBackup`.
-Data access — list/map fields are JSON text columns: `field_names`, `reveal_fields`, `export_fields`, `fields_json`.
-Naming — visible product is `LLM Recall`; internal package/classes/DB retain `preanki`/`PreAnki*` for continuity.
+Data access — list/map fields are JSON text columns: `field_names`, `front_fields`, `reveal_fields`, `export_fields`, `fields_json`.
+Naming — visible product is `Memory Studio`; internal package/classes/DB retain `preanki`/`PreAnki*` for continuity.
 Naming — storage enums use explicit values: `question_answer`, `cloze`, `new`, `again`, `learned`.
 Async — startup awaits `repository.initialize()` and `appState.load()` before `runApp`.
 Async — route-safe work uses `Future.microtask` in `SessionScreen.didChangeDependencies`.
@@ -188,7 +188,7 @@ Manual cloze editing — text-selection menu is limited to Cut/Copy/Paste/Cloze 
 - Current WIP — no accounts, sync, cloud storage, or in-app LLM cleanup.
 - Footgun — keep `applicationId = com.preanki.preanki`; changing it loses Android upgrade/data continuity.
 - Footgun — keep DB filename `preanki.db`; renaming needs migration/copy strategy.
-- Footgun — schema version is `preAnkiSchemaVersion` (7) in `repository.dart`; bump it and add migrations in `_openDatabase` for any DB shape change.
+- Footgun — schema version is `preAnkiSchemaVersion` (8) in `repository.dart`; bump it and add migrations in `_openDatabase` for any DB shape change.
 - Footgun — `review_index` stores expanded review keys; v7 multiplied legacy card indexes by `reviewKeyMultiplier`.
 - Footgun — cloze note with c1+c2 is one stored/exported row but two review items.
 - Footgun — multiple deletions with same cloze number produce one review item for that number.
@@ -205,9 +205,10 @@ Manual cloze editing — text-selection menu is limited to Cut/Copy/Paste/Cloze 
 - Footgun — header detection intentionally does not treat `Cell,Mitochondria` as a header.
 - Footgun — Dart and Android Kotlin decode both fall back to Windows-1252 for malformed-UTF-8 single-byte text; keep the two heuristics in sync.
 - Footgun — `HtmlCardText._containsHtml` treats entities as HTML; plain text with `<tag>`-like content renders as HTML.
-- Intentional — internal `PreAnki*` names remain despite visible app label `LLM Recall`.
+- Intentional — internal `PreAnki*` names remain despite visible app label `Memory Studio`.
 - Intentional — no saved import presets; mapping is per CSV import.
 - Intentional — `android:exported=true` is required because activity has launcher/external intent filters.
 - Intentional — `android:launchMode=singleTop` allows `onNewIntent` imports into the running app.
 - Intentional — card text stays regular weight; cloze answer span is the bold green emphasis.
+- Intentional — `front_field` chooses the question/cloze driver; ordered `front_fields` independently chooses fields visible before flip. Every field is visible after flip.
 - Intentional — review card face has fixed viewport-relative height with internal scrolling to avoid flip resize.

@@ -134,7 +134,7 @@ Future<void> _importBackup(BuildContext context) async {
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Import backup?'),
-      content: const Text('This replaces all local LLM Recall data.'),
+      content: const Text('This replaces all local Memory Studio data.'),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),

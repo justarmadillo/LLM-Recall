@@ -13,7 +13,7 @@ import 'models.dart';
 
 /// Single source of truth for the SQLite schema version. Bump this and add a
 /// matching `onUpgrade` branch in `_openDatabase` for any DB shape change.
-const preAnkiSchemaVersion = 7;
+const preAnkiSchemaVersion = 8;
 
 class PreAnkiRepository {
   // Keep public constructor labels instead of exposing private field names.
@@ -79,11 +79,20 @@ class PreAnkiRepository {
     SessionCardType cardType = SessionCardType.questionAnswer,
     required List<String> fieldNames,
     required String frontField,
+    List<String>? frontFields,
     required List<String> revealFields,
     required List<String> exportFields,
     required bool includeHeader,
     required List<Map<String, String>> cardFields,
   }) async {
+    final normalizedFrontFields = _validateAndNormalizeFrontFields(
+      fieldNames: fieldNames,
+      frontField: frontField,
+      frontFields: frontFields ?? [frontField],
+    );
+    if (revealFields.any((field) => !fieldNames.contains(field))) {
+      throw StateError('Back fields must be included in the field order.');
+    }
     final now = DateTime.now();
     return _db.transaction((txn) async {
       final sessionId = await txn.insert('sessions', {
@@ -92,7 +101,10 @@ class PreAnkiRepository {
         'card_type': cardType.storageValue,
         'field_names': _encodeList(fieldNames),
         'front_field': frontField,
-        'reveal_fields': _encodeList(revealFields),
+        'front_fields': _encodeList(normalizedFrontFields),
+        // Keep the legacy column populated for older code and backups. Every
+        // field is available on the back, even when it is also on the front.
+        'reveal_fields': _encodeList(fieldNames),
         'export_fields': _encodeList(exportFields),
         'include_header': includeHeader ? 1 : 0,
         'total_cards': cardFields.length,
@@ -203,6 +215,122 @@ class PreAnkiRepository {
       where: 'id = ?',
       whereArgs: [sessionId],
     );
+  }
+
+  /// Changes which field is used as the review prompt, which ordered fields
+  /// are shown on the front, and the display order of all card fields.
+  ///
+  /// [fieldNames] must be a reordering of the session's existing fields. The
+  /// separately configured export order is intentionally left unchanged.
+  /// Reordering fields without changing a cloze session's [frontField] is a
+  /// metadata-only operation and preserves review navigation and item states.
+  Future<void> updateSessionFieldLayout({
+    required int sessionId,
+    required List<String> fieldNames,
+    required String frontField,
+    List<String>? frontFields,
+  }) async {
+    final now = DateTime.now().toIso8601String();
+    await _db.transaction((txn) async {
+      final sessionRows = await txn.query(
+        'sessions',
+        where: 'id = ?',
+        whereArgs: [sessionId],
+        limit: 1,
+      );
+      if (sessionRows.isEmpty) {
+        throw StateError('Session not found.');
+      }
+
+      final sessionRow = sessionRows.single;
+      final currentFields = _decodeFieldList(
+        sessionRow['field_names'] as String?,
+      );
+      _validateFieldLayout(
+        currentFields: currentFields,
+        fieldNames: fieldNames,
+        frontField: frontField,
+      );
+
+      final previousFrontField = sessionRow['front_field'] as String;
+      final previousFrontFields = _effectiveStoredFrontFields(
+        fieldNames: currentFields,
+        frontField: previousFrontField,
+        storedValue: sessionRow['front_fields'],
+      );
+      final normalizedFrontFields = _validateAndNormalizeFrontFields(
+        fieldNames: fieldNames,
+        frontField: frontField,
+        frontFields:
+            frontFields ??
+            (previousFrontField == frontField
+                ? previousFrontFields
+                : [frontField]),
+      );
+
+      final cardType = SessionCardType.fromStorage(
+        sessionRow['card_type'] as String?,
+      );
+      final migrateClozeItems =
+          cardType == SessionCardType.cloze && previousFrontField != frontField;
+      List<Map<String, Object?>> cards = const [];
+
+      if (migrateClozeItems) {
+        cards = await txn.query(
+          'cards',
+          where: 'session_id = ?',
+          whereArgs: [sessionId],
+          orderBy: 'original_index ASC',
+        );
+        for (final card in cards) {
+          final isKept =
+              CardStatus.fromStorage(card['status'] as String? ?? 'kept') ==
+              CardStatus.kept;
+          if (!isKept) {
+            continue;
+          }
+          final fields = _decodeFieldMap(card['fields_json'] as String?);
+          if (!ClozeTools.hasCloze(fields[frontField] ?? '')) {
+            final cardNumber = (card['original_index'] as int? ?? 0) + 1;
+            throw StateError(
+              'Cannot use "$frontField" as the cloze field because card '
+              '$cardNumber has no cloze deletion in that field.',
+            );
+          }
+        }
+      }
+
+      await txn.update(
+        'sessions',
+        {
+          'field_names': _encodeList(fieldNames),
+          'front_field': frontField,
+          'front_fields': _encodeList(normalizedFrontFields),
+          // Every field is available after reveal, including fields that are
+          // also selected for the front of the card.
+          'reveal_fields': _encodeList(fieldNames),
+          if (migrateClozeItems) 'review_index': 0,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [sessionId],
+      );
+
+      if (migrateClozeItems) {
+        for (final card in cards) {
+          final cardId = card['id'] as int;
+          await _syncReviewItemsForCard(
+            txn,
+            cardId: cardId,
+            cardType: cardType,
+            frontField: frontField,
+            fields: _decodeFieldMap(card['fields_json'] as String?),
+            now: now,
+          );
+          await _updateCardAggregateReviewState(txn, cardId, now);
+        }
+      }
+    });
   }
 
   Future<void> restartSessionReview(int sessionId) async {
@@ -455,7 +583,7 @@ class PreAnkiRepository {
     final settingsRows = await _db.query('app_settings', orderBy: 'key ASC');
     return {
       'format': 'llm_recall_backup',
-      'formatVersion': 1,
+      'formatVersion': 2,
       'databaseVersion': preAnkiSchemaVersion,
       'exportedAt': DateTime.now().toIso8601String(),
       'sessions': sessionsWithCards,
@@ -465,12 +593,12 @@ class PreAnkiRepository {
 
   Future<void> importBackup(Map<String, Object?> backup) async {
     if (backup['format'] != 'llm_recall_backup') {
-      throw const FormatException('This is not an LLM Recall backup file.');
+      throw const FormatException('This is not a Memory Studio backup file.');
     }
     final formatVersion = _backupInt(backup['formatVersion']) ?? 1;
-    if (formatVersion > 1) {
+    if (formatVersion > 2) {
       throw FormatException(
-        'This backup was created by a newer LLM Recall backup format ($formatVersion).',
+        'This backup was created by a newer Memory Studio backup format ($formatVersion).',
       );
     }
     final sessions = _requiredBackupList(backup, 'sessions');
@@ -488,6 +616,28 @@ class PreAnkiRepository {
         final reviewItems = _backupList(entry['reviewItems']);
         final sessionRow = _sqliteRow(session)..remove('preset_id');
         sessionRow['card_type'] ??= _inferBackupCardType(cards).storageValue;
+        final fieldNames = _decodeBackupFieldList(sessionRow['field_names']);
+        final frontField = sessionRow['front_field'];
+        if (frontField is! String || frontField.isEmpty) {
+          throw const FormatException(
+            'Backup session is missing its prompt field.',
+          );
+        }
+        final requestedFrontFields = formatVersion >= 2
+            ? _decodeBackupFieldList(sessionRow['front_fields'])
+            : [frontField];
+        try {
+          sessionRow['front_fields'] = _encodeList(
+            _validateAndNormalizeFrontFields(
+              fieldNames: fieldNames,
+              frontField: frontField,
+              frontFields: requestedFrontFields,
+            ),
+          );
+        } on StateError catch (error) {
+          throw FormatException('Invalid backup field layout: $error');
+        }
+        sessionRow['reveal_fields'] = _encodeList(fieldNames);
         await txn.insert('sessions', sessionRow);
         for (final card in cards) {
           await txn.insert('cards', _sqliteRow(card));
@@ -568,6 +718,7 @@ class PreAnkiRepository {
               card_type TEXT NOT NULL DEFAULT 'question_answer',
               field_names TEXT NOT NULL,
               front_field TEXT NOT NULL,
+              front_fields TEXT NOT NULL,
               reveal_fields TEXT NOT NULL,
               export_fields TEXT NOT NULL,
               include_header INTEGER NOT NULL,
@@ -666,6 +817,29 @@ class PreAnkiRepository {
             await db.execute(
               'UPDATE sessions SET review_index = review_index * $reviewKeyMultiplier',
             );
+          }
+          if (oldVersion < 8) {
+            await db.execute(
+              "ALTER TABLE sessions ADD COLUMN front_fields TEXT NOT NULL DEFAULT '[]'",
+            );
+            final sessions = await db.query(
+              'sessions',
+              columns: ['id', 'field_names', 'front_field'],
+            );
+            for (final session in sessions) {
+              final frontField = session['front_field'];
+              if (frontField is String && frontField.isNotEmpty) {
+                await db.update(
+                  'sessions',
+                  {
+                    'front_fields': _encodeList([frontField]),
+                    'reveal_fields': session['field_names'],
+                  },
+                  where: 'id = ?',
+                  whereArgs: [session['id']],
+                );
+              }
+            }
           }
         },
       ),
@@ -851,6 +1025,31 @@ String _encodeMap(Map<String, String> values) {
   return jsonEncode(values);
 }
 
+List<String> _decodeFieldList(String? raw) {
+  if (raw == null || raw.isEmpty) {
+    return const [];
+  }
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) {
+      return const [];
+    }
+    return decoded.map((value) => value.toString()).toList();
+  } on FormatException {
+    return const [];
+  }
+}
+
+List<String> _decodeBackupFieldList(Object? raw) {
+  if (raw is List) {
+    return raw.map((value) => value.toString()).toList();
+  }
+  if (raw is String) {
+    return _decodeFieldList(raw);
+  }
+  return const [];
+}
+
 Map<String, String> _decodeFieldMap(String? raw) {
   if (raw == null || raw.isEmpty) {
     return const {};
@@ -866,6 +1065,79 @@ Map<String, String> _decodeFieldMap(String? raw) {
   } on FormatException {
     return const {};
   }
+}
+
+void _validateFieldLayout({
+  required List<String> currentFields,
+  required List<String> fieldNames,
+  required String frontField,
+}) {
+  if (fieldNames.isEmpty) {
+    throw StateError('A session must have at least one field.');
+  }
+  if (fieldNames.toSet().length != fieldNames.length) {
+    throw StateError('Field order cannot contain duplicate fields.');
+  }
+  final currentSet = currentFields.toSet();
+  final requestedSet = fieldNames.toSet();
+  if (currentFields.length != fieldNames.length ||
+      currentSet.length != requestedSet.length ||
+      !currentSet.containsAll(requestedSet)) {
+    throw StateError(
+      'Field order must contain every existing session field exactly once.',
+    );
+  }
+  if (!requestedSet.contains(frontField)) {
+    throw StateError('The prompt field must be included in the field order.');
+  }
+}
+
+List<String> _validateAndNormalizeFrontFields({
+  required List<String> fieldNames,
+  required String frontField,
+  required List<String> frontFields,
+}) {
+  if (fieldNames.isEmpty) {
+    throw StateError('A session must have at least one field.');
+  }
+  if (fieldNames.toSet().length != fieldNames.length) {
+    throw StateError('Field order cannot contain duplicate fields.');
+  }
+  if (!fieldNames.contains(frontField)) {
+    throw StateError('The prompt field must be included in the field order.');
+  }
+  if (frontFields.isEmpty) {
+    throw StateError('At least one field must be shown on the card front.');
+  }
+  if (frontFields.toSet().length != frontFields.length) {
+    throw StateError('Front fields cannot contain duplicate fields.');
+  }
+  if (!frontFields.contains(frontField)) {
+    throw StateError('Front fields must include the prompt field.');
+  }
+  final knownFields = fieldNames.toSet();
+  if (frontFields.any((field) => !knownFields.contains(field))) {
+    throw StateError('Front fields must be included in the field order.');
+  }
+  final selectedFields = frontFields.toSet();
+  return [
+    for (final field in fieldNames)
+      if (selectedFields.contains(field)) field,
+  ];
+}
+
+List<String> _effectiveStoredFrontFields({
+  required List<String> fieldNames,
+  required String frontField,
+  required Object? storedValue,
+}) {
+  final storedFields = _decodeBackupFieldList(storedValue);
+  final selectedFields = <String>{...storedFields, frontField};
+  final effectiveFields = [
+    for (final field in fieldNames)
+      if (selectedFields.contains(field)) field,
+  ];
+  return effectiveFields.isEmpty ? [frontField] : effectiveFields;
 }
 
 List<int> _reviewItemNumbers({

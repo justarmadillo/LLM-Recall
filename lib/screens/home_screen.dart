@@ -90,7 +90,10 @@ class _HomeTopBar extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('LLM Recall', style: Theme.of(context).textTheme.titleLarge),
+              Text(
+                'Memory Studio',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
               Text(
                 'Review sessions',
                 style: Theme.of(context).textTheme.bodySmall,
@@ -361,4 +364,3 @@ Future<void> _renameSession(
   }
   await appState.renameSession(session.id!, title);
 }
-

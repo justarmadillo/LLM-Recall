@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../cloze_tools.dart';
 import '../design_system.dart';
 import '../models.dart';
+import 'html_card_text.dart';
 
 Future<Map<String, String>?> showCardEditorDialog({
   required BuildContext context,
@@ -69,6 +70,7 @@ class _CardEditorDialog extends StatefulWidget {
 
 class _CardEditorDialogState extends State<_CardEditorDialog> {
   late final Map<String, TextEditingController> _controllers;
+  bool _showHtmlPreview = false;
 
   @override
   void initState() {
@@ -102,6 +104,17 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
                 _EditorError(text: _errorText!),
                 const SizedBox(height: 12),
               ],
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: _showHtmlPreview,
+                onChanged: (value) {
+                  setState(() => _showHtmlPreview = value);
+                },
+                secondary: const Icon(Icons.code_outlined),
+                title: const Text('Preview HTML'),
+                subtitle: const Text('Render every field as it will appear'),
+              ),
+              const SizedBox(height: 8),
               for (final entry in _controllers.entries) ...[
                 Builder(
                   builder: (context) {
@@ -138,6 +151,34 @@ class _CardEditorDialogState extends State<_CardEditorDialog> {
                       onPressed: () => _wrapSelectedTextAsCloze(entry.key),
                     ),
                   ),
+                if (_showHtmlPreview) ...[
+                  const SizedBox(height: 8),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: entry.value,
+                    builder: (context, value, _) {
+                      return AppSurface(
+                        padding: const EdgeInsets.all(12),
+                        radius: AppRadii.md,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${entry.key} preview',
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(color: AppColors.inkMuted),
+                            ),
+                            const SizedBox(height: 6),
+                            HtmlCardText(
+                              value: value.text,
+                              textStyle: Theme.of(context).textTheme.bodyLarge
+                                  ?.copyWith(color: AppColors.ink, height: 1.4),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ],
                 const SizedBox(height: 12),
               ],
             ],

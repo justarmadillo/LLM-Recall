@@ -20,6 +20,28 @@ void main() {
 
   tearDown(() => repository.close());
 
+  test('persists and validates the review text size', () async {
+    await appState.load();
+    expect(appState.reviewTextScale, defaultReviewTextScale);
+
+    await appState.setReviewTextScale(1.2);
+    expect(appState.reviewTextScale, 1.2);
+
+    final reloaded = PreAnkiAppState(repository: repository);
+    await reloaded.load();
+    expect(reloaded.reviewTextScale, 1.2);
+
+    await reloaded.setReviewTextScale(99);
+    expect(reloaded.reviewTextScale, maxReviewTextScale);
+    await reloaded.setReviewTextScale(-99);
+    expect(reloaded.reviewTextScale, minReviewTextScale);
+
+    await repository.setSetting('review_text_scale', 'not-a-number');
+    final fallback = PreAnkiAppState(repository: repository);
+    await fallback.load();
+    expect(fallback.reviewTextScale, defaultReviewTextScale);
+  });
+
   test('moves through review cards without grading them', () async {
     final sessionId = await appState.createSessionFromImport(
       title: 'Linking review',

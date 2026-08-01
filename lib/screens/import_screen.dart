@@ -10,6 +10,7 @@ import '../csv_tools.dart';
 import '../design_system.dart';
 import '../main.dart';
 import '../models.dart';
+import '../widgets/html_card_text.dart';
 import 'session_screen.dart';
 
 enum ImportFormat {
@@ -38,13 +39,13 @@ class _ImportScreenState extends State<ImportScreen> {
   final _csvTools = CsvTools();
   final _textController = TextEditingController();
   final _titleController = TextEditingController();
-  final _fieldControllers = <TextEditingController>[];
+  final _fieldMappings = <_ImportFieldMapping>[];
 
   CsvImportResult? _result;
   bool _hasHeader = false;
   bool _includeHeader = true;
   ImportFormat _format = ImportFormat.questionAnswer;
-  int _primaryIndex = 0;
+  int _primarySourceIndex = 0;
   String? _sourceName;
   String? _formError;
 
@@ -67,8 +68,8 @@ class _ImportScreenState extends State<ImportScreen> {
   void dispose() {
     _textController.dispose();
     _titleController.dispose();
-    for (final controller in _fieldControllers) {
-      controller.dispose();
+    for (final mapping in _fieldMappings) {
+      mapping.controller.dispose();
     }
     super.dispose();
   }
@@ -137,22 +138,33 @@ class _ImportScreenState extends State<ImportScreen> {
               ),
               const SizedBox(height: 16),
               _MappingPanel(
-                fieldControllers: _fieldControllers,
+                fieldMappings: _fieldMappings,
                 format: _format,
-                primaryIndex: _primaryIndex,
+                primarySourceIndex: _primarySourceIndex,
                 includeHeader: _includeHeader,
                 onFormatChanged: (format) {
                   setState(() {
                     _format = format;
-                    _primaryIndex = _suggestPrimaryIndex();
+                    _primarySourceIndex = _suggestPrimarySourceIndex();
                   });
                 },
                 onPrimaryChanged: (value) {
                   if (value == null) {
                     return;
                   }
-                  setState(() => _primaryIndex = value);
+                  setState(() => _primarySourceIndex = value);
                 },
+                onFrontChanged: (sourceIndex, value) {
+                  setState(() {
+                    _fieldMappings
+                            .firstWhere(
+                              (mapping) => mapping.sourceIndex == sourceIndex,
+                            )
+                            .showOnFront =
+                        value;
+                  });
+                },
+                onReorderItem: _reorderFields,
                 onIncludeHeaderChanged: (value) {
                   setState(() => _includeHeader = value);
                 },
@@ -161,7 +173,7 @@ class _ImportScreenState extends State<ImportScreen> {
               const SizedBox(height: 16),
               _PreviewTable(
                 fieldNames: fieldNames,
-                rows: dataRows.take(5).toList(),
+                rows: _rowsInFieldOrder(dataRows.take(5)),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -184,9 +196,23 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   List<String> get _fieldNames {
-    return _fieldControllers
-        .map((controller) => controller.text.trim())
+    return _fieldMappings
+        .map((mapping) => mapping.controller.text.trim())
         .toList();
+  }
+
+  List<List<String>> _rowsInFieldOrder(Iterable<List<String>> rows) {
+    return reorderRowsBySourceIndices(
+      rows,
+      _fieldMappings.map((mapping) => mapping.sourceIndex),
+    );
+  }
+
+  void _reorderFields(int oldIndex, int newIndex) {
+    setState(() {
+      final mapping = _fieldMappings.removeAt(oldIndex);
+      _fieldMappings.insert(newIndex, mapping);
+    });
   }
 
   Future<void> _pickFile() async {
@@ -278,10 +304,10 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   void _resetMapping() {
-    for (final controller in _fieldControllers) {
-      controller.dispose();
+    for (final mapping in _fieldMappings) {
+      mapping.controller.dispose();
     }
-    _fieldControllers.clear();
+    _fieldMappings.clear();
     final result = _result;
     if (result == null || result.rows.isEmpty) {
       return;
@@ -293,13 +319,18 @@ class _ImportScreenState extends State<ImportScreen> {
             (index) => 'Column ${index + 1}',
           );
     final uniqueFields = _uniqueFieldNames(fields);
-    _fieldControllers.addAll(
-      uniqueFields.map((field) => TextEditingController(text: field)),
+    _fieldMappings.addAll(
+      uniqueFields.indexed.map(
+        (entry) => _ImportFieldMapping(
+          sourceIndex: entry.$1,
+          controller: TextEditingController(text: entry.$2),
+        ),
+      ),
     );
     _format = _dataLooksLikeCloze()
         ? ImportFormat.cloze
         : ImportFormat.questionAnswer;
-    _primaryIndex = _suggestPrimaryIndex();
+    _primarySourceIndex = _suggestPrimarySourceIndex();
   }
 
   Future<void> _createSession(List<List<String>> dataRows) async {
@@ -310,10 +341,19 @@ class _ImportScreenState extends State<ImportScreen> {
       return;
     }
     final fields = _fieldNames;
-    final primaryField = fields[_primaryIndex];
+    final primaryMapping = _fieldMappings.firstWhere(
+      (mapping) => mapping.sourceIndex == _primarySourceIndex,
+    );
+    final primaryField = primaryMapping.controller.text.trim();
     final answerFields = [
-      for (final field in fields)
-        if (field != primaryField) field,
+      for (final mapping in _fieldMappings)
+        if (mapping.sourceIndex != _primarySourceIndex)
+          mapping.controller.text.trim(),
+    ];
+    final frontFields = [
+      for (final mapping in _fieldMappings)
+        if (mapping.sourceIndex == _primarySourceIndex || mapping.showOnFront)
+          mapping.controller.text.trim(),
     ];
     final sessionId = await appState.createSessionFromImport(
       title: _titleController.text,
@@ -321,9 +361,10 @@ class _ImportScreenState extends State<ImportScreen> {
       cardType: _format == ImportFormat.cloze
           ? SessionCardType.cloze
           : SessionCardType.questionAnswer,
-      rows: dataRows,
+      rows: _rowsInFieldOrder(dataRows),
       fieldNames: fields,
       frontField: primaryField,
+      frontFields: frontFields,
       revealFields: answerFields,
       exportFields: fields,
       includeHeader: _includeHeader,
@@ -335,8 +376,7 @@ class _ImportScreenState extends State<ImportScreen> {
       // createSessionFromImport reports failures via appState.errorMessage;
       // surface it here so the user is not left staring at a silent screen.
       setState(() {
-        _formError =
-            appState.errorMessage ?? 'Could not create the session.';
+        _formError = appState.errorMessage ?? 'Could not create the session.';
       });
       return;
     }
@@ -358,7 +398,9 @@ class _ImportScreenState extends State<ImportScreen> {
     if (fields.toSet().length != fields.length) {
       return 'Field names must be unique.';
     }
-    if (_primaryIndex < 0 || _primaryIndex >= fields.length) {
+    if (!_fieldMappings.any(
+      (mapping) => mapping.sourceIndex == _primarySourceIndex,
+    )) {
       return _format == ImportFormat.cloze
           ? 'Choose the cloze field.'
           : 'Choose the question field.';
@@ -367,28 +409,33 @@ class _ImportScreenState extends State<ImportScreen> {
       return 'Question / answer imports need at least one answer field.';
     }
     if (_format == ImportFormat.cloze &&
-        !_rowsContainCloze(dataRows, _primaryIndex)) {
+        !_rowsContainCloze(dataRows, _primarySourceIndex)) {
       return 'The selected cloze field does not contain {{c1::...}} text.';
     }
     return null;
   }
 
-  int _suggestPrimaryIndex() {
-    if (_fieldControllers.isEmpty) {
+  int _suggestPrimarySourceIndex() {
+    if (_fieldMappings.isEmpty) {
       return 0;
     }
     if (_format == ImportFormat.cloze) {
       final result = _result;
       if (result != null) {
         final dataRows = result.dataRows(headerOverride: _hasHeader);
-        for (var index = 0; index < _fieldControllers.length; index += 1) {
-          if (_rowsContainCloze(dataRows, index)) {
-            return index;
+        for (final mapping in _fieldMappings) {
+          if (_rowsContainCloze(dataRows, mapping.sourceIndex)) {
+            return mapping.sourceIndex;
           }
         }
       }
     }
-    return _primaryIndex.clamp(0, _fieldControllers.length - 1);
+    if (_fieldMappings.any(
+      (mapping) => mapping.sourceIndex == _primarySourceIndex,
+    )) {
+      return _primarySourceIndex;
+    }
+    return _fieldMappings.first.sourceIndex;
   }
 
   bool _dataLooksLikeCloze() {
@@ -397,8 +444,8 @@ class _ImportScreenState extends State<ImportScreen> {
       return false;
     }
     final dataRows = result.dataRows(headerOverride: _hasHeader);
-    for (var index = 0; index < _fieldControllers.length; index += 1) {
-      if (_rowsContainCloze(dataRows, index)) {
+    for (final mapping in _fieldMappings) {
+      if (_rowsContainCloze(dataRows, mapping.sourceIndex)) {
         return true;
       }
     }
@@ -410,6 +457,20 @@ class _ImportScreenState extends State<ImportScreen> {
       return index < row.length && ClozeTools.hasCloze(row[index]);
     });
   }
+}
+
+@visibleForTesting
+List<List<String>> reorderRowsBySourceIndices(
+  Iterable<List<String>> rows,
+  Iterable<int> sourceIndices,
+) {
+  final indices = sourceIndices.toList();
+  return rows.map((row) {
+    return [
+      for (final sourceIndex in indices)
+        sourceIndex >= 0 && sourceIndex < row.length ? row[sourceIndex] : '',
+    ];
+  }).toList();
 }
 
 class _InputPanel extends StatelessWidget {
@@ -519,22 +580,26 @@ class _ImportSummary extends StatelessWidget {
 
 class _MappingPanel extends StatelessWidget {
   const _MappingPanel({
-    required this.fieldControllers,
+    required this.fieldMappings,
     required this.format,
-    required this.primaryIndex,
+    required this.primarySourceIndex,
     required this.includeHeader,
     required this.onFormatChanged,
     required this.onPrimaryChanged,
+    required this.onFrontChanged,
+    required this.onReorderItem,
     required this.onIncludeHeaderChanged,
     required this.onFieldChanged,
   });
 
-  final List<TextEditingController> fieldControllers;
+  final List<_ImportFieldMapping> fieldMappings;
   final ImportFormat format;
-  final int primaryIndex;
+  final int primarySourceIndex;
   final bool includeHeader;
   final ValueChanged<ImportFormat> onFormatChanged;
   final ValueChanged<int?> onPrimaryChanged;
+  final void Function(int sourceIndex, bool value) onFrontChanged;
+  final ReorderCallback onReorderItem;
   final ValueChanged<bool> onIncludeHeaderChanged;
   final VoidCallback onFieldChanged;
 
@@ -565,59 +630,136 @@ class _MappingPanel extends StatelessWidget {
             },
           ),
           const SizedBox(height: 12),
-          for (var index = 0; index < fieldControllers.length; index += 1) ...[
-            AppSurface(
-              padding: const EdgeInsets.all(12),
-              radius: AppRadii.md,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Checkbox(
-                    value: index == primaryIndex,
-                    onChanged: (_) => onPrimaryChanged(index),
+          Text(
+            'Drag fields into review and export order. The prompt always '
+            'appears on the front and back; choose whether each extra field '
+            'also appears on the front.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.inkMuted),
+          ),
+          const SizedBox(height: 8),
+          RadioGroup<int>(
+            groupValue: primarySourceIndex,
+            onChanged: onPrimaryChanged,
+            child: ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: fieldMappings.length,
+              onReorderItem: onReorderItem,
+              itemBuilder: (context, index) {
+                final mapping = fieldMappings[index];
+                final isPrimary = mapping.sourceIndex == primarySourceIndex;
+                return Padding(
+                  key: ValueKey('import-field-${mapping.sourceIndex}'),
+                  padding: EdgeInsets.only(
+                    bottom: index < fieldMappings.length - 1 ? 12 : 0,
                   ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: TextField(
-                      controller: fieldControllers[index],
-                      onChanged: (_) => onFieldChanged(),
-                      decoration: InputDecoration(
-                        labelText: index == primaryIndex
-                            ? (format == ImportFormat.cloze
-                                  ? 'Cloze field'
-                                  : 'Question field')
-                            : (format == ImportFormat.cloze
-                                  ? 'Extra field'
-                                  : 'Answer field'),
-                        prefixIcon: const Icon(Icons.short_text_outlined),
-                      ),
+                  child: AppSurface(
+                    padding: const EdgeInsets.all(12),
+                    radius: AppRadii.md,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: RadioListTile<int>(
+                                key: ValueKey(
+                                  'import-primary-${mapping.sourceIndex}',
+                                ),
+                                value: mapping.sourceIndex,
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                title: Text(
+                                  format == ImportFormat.cloze
+                                      ? 'Use as cloze prompt'
+                                      : 'Use as question prompt',
+                                ),
+                                subtitle: Text(
+                                  isPrimary
+                                      ? 'Selected prompt field'
+                                      : 'Select this field as the prompt',
+                                ),
+                              ),
+                            ),
+                            ReorderableDragStartListener(
+                              key: ValueKey(
+                                'import-field-drag-${mapping.sourceIndex}',
+                              ),
+                              index: index,
+                              child: const Tooltip(
+                                message: 'Drag to reorder field',
+                                child: Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: Icon(Icons.drag_handle),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: mapping.controller,
+                          onChanged: (_) => onFieldChanged(),
+                          decoration: InputDecoration(
+                            labelText: isPrimary
+                                ? (format == ImportFormat.cloze
+                                      ? 'Cloze field'
+                                      : 'Question field')
+                                : (format == ImportFormat.cloze
+                                      ? 'Extra field'
+                                      : 'Answer field'),
+                            prefixIcon: const Icon(Icons.short_text_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                isPrimary
+                                    ? 'Front & back (prompt)'
+                                    : (mapping.showOnFront
+                                          ? 'Front & back'
+                                          : 'Back only'),
+                                key: ValueKey(
+                                  'import-front-label-${mapping.sourceIndex}',
+                                ),
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: isPrimary
+                                          ? AppColors.primary
+                                          : AppColors.inkMuted,
+                                      fontWeight:
+                                          isPrimary || mapping.showOnFront
+                                          ? FontWeight.w700
+                                          : FontWeight.w400,
+                                    ),
+                              ),
+                            ),
+                            Switch(
+                              key: ValueKey(
+                                'import-front-toggle-${mapping.sourceIndex}',
+                              ),
+                              value: isPrimary || mapping.showOnFront,
+                              onChanged: isPrimary
+                                  ? null
+                                  : (value) => onFrontChanged(
+                                      mapping.sourceIndex,
+                                      value,
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
+                );
+              },
             ),
-            if (index == primaryIndex) ...[
-              const SizedBox(height: 8),
-              AppBadge(
-                label: format == ImportFormat.cloze
-                    ? 'Cloze prompt'
-                    : 'Question side',
-                icon: format == ImportFormat.cloze
-                    ? Icons.data_object_outlined
-                    : Icons.quiz_outlined,
-              ),
-            ] else ...[
-              const SizedBox(height: 8),
-              AppBadge(
-                label: 'Shows on back',
-                icon: Icons.visibility_outlined,
-                color: AppColors.inkMuted,
-              ),
-            ],
-            if (index < fieldControllers.length - 1) ...[
-              const SizedBox(height: 12),
-            ],
-          ],
+          ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: includeHeader,
@@ -658,10 +800,9 @@ class _PreviewTable extends StatelessWidget {
                         DataCell(
                           SizedBox(
                             width: 180,
-                            child: Text(
-                              index < row.length ? row[index] : '',
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
+                            child: HtmlCardText(
+                              value: index < row.length ? row[index] : '',
+                              textStyle: Theme.of(context).textTheme.bodyMedium,
                             ),
                           ),
                         ),
@@ -674,6 +815,15 @@ class _PreviewTable extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ImportFieldMapping {
+  _ImportFieldMapping({required this.sourceIndex, required this.controller})
+    : showOnFront = false;
+
+  final int sourceIndex;
+  final TextEditingController controller;
+  bool showOnFront;
 }
 
 List<String> _uniqueFieldNames(List<String> fields) {

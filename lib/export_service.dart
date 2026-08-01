@@ -35,7 +35,8 @@ class ExportService {
         .trim()
         .replaceAll(RegExp(r'[^\w\s.-]+'), '')
         .replaceAll(RegExp(r'\s+'), '_');
-    final fileName = '${safeName.isEmpty ? 'llm_recall_export' : safeName}.csv';
+    final fileName =
+        '${safeName.isEmpty ? 'memory_studio_export' : safeName}.csv';
     final bytes = Uint8List.fromList(utf8.encode(csv));
     String? pickerInitialDirectory;
     if (initialDirectory != null && initialDirectory.trim().isNotEmpty) {
